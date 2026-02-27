@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Dashboard</title></head>
+<body>
+  <h1>Dashboard: ${username}</h1>
+  <p><a href="/logout">Logout</a></p>
+  <h2>Generate API key</h2>
+  <form method="post" action="/dashboard/generate">
+    <label>Plan
+      <select name="plan">
+        <option value="free">free</option>
+        <option value="pro">pro</option>
+        <option value="enterprise">enterprise</option>
+      </select>
+    </label>
+    <button type="submit">Generate</button>
+  </form>
+  <p>${message}</p>
+  <pre>${latest_key}</pre>
+  <h2>Your key prefixes</h2>
+  <ul>${keys_html}</ul>
+</body>
+</html>
