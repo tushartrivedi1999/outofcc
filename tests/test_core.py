@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from app.cache import TTLCache
+from app.console import SearchConsoleService
 from app.rate_limit import SlidingWindowRateLimiter
 from app.security import generate_api_key, hash_password, verify_password
 from app.session import SessionManager
@@ -71,6 +72,34 @@ class CoreTests(unittest.TestCase):
             row = store.find_api_key_by_hash(digest)
             self.assertIsNotNone(row)
             self.assertEqual(row["user_id"], user_id)
+
+    def test_search_console_flow(self):
+        with tempfile.TemporaryDirectory() as d:
+            db = str(Path(d) / "app.db")
+            store = UserStore(db)
+            user_id = store.create_user("u1", "admin")
+            svc = SearchConsoleService()
+
+            token = svc.create_token()
+            site_id = store.create_site(user_id, "example.com", token)
+            payload = svc.build_verification_payload("example.com", token)
+            self.assertIn(token, payload.dns_txt)
+
+            store.mark_site_verified(site_id, "dns")
+            rows = store.list_sites(user_id)
+            self.assertEqual(int(rows[0]["verified"]), 1)
+
+            metrics = svc.default_daily_metrics(7)
+            store.seed_site_metrics(site_id, metrics)
+            store.add_site_issue(site_id, "Broken canonical", "high", "open", "Canonical mismatch found")
+            self.assertGreaterEqual(len(store.list_site_metrics(site_id)), 7)
+            self.assertEqual(len(store.list_site_issues(site_id)), 1)
+
+            store.log_api_usage(user_id, "python", 120, 8)
+            self.assertEqual(len(store.list_recent_api_usage(user_id)), 1)
+
+            svg = svc.build_svg_bars([1, 3, 2])
+            self.assertIn("<svg", svg)
 
     def test_generate_api_key_prefix(self):
         self.assertTrue(generate_api_key().startswith("osk_"))

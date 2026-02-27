@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Open Search Console</title></head>
+<body>
+  <h1>Open Search Console</h1>
+  <p><a href="/dashboard">Back to dashboard</a></p>
+  <h2>Add website property</h2>
+  <form method="post" action="/console/add">
+    <label>Domain or URL prefix <input name="domain" placeholder="example.com" required></label>
+    <button type="submit">Add property</button>
+  </form>
+  <p>${message}</p>
+  <h2>Your properties</h2>
+  <table border="1" cellpadding="6" cellspacing="0">
+    <thead><tr><th>Property</th><th>Status</th><th>Method</th><th>Added</th></tr></thead>
+    <tbody>${sites_rows}</tbody>
+  </table>
+</body>
+</html>

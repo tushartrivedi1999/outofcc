@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Property Analytics</title></head>
+<body>
+  <h1>Property: ${domain}</h1>
+  <p><a href="/console">Back to properties</a></p>
+  <p>Verification method: ${verification_method}</p>
+
+  <h2>Impressions trend</h2>
+  <div>${chart_impressions}</div>
+
+  <h2>Clicks trend</h2>
+  <div>${chart_clicks}</div>
+
+  <h2>Performance table</h2>
+  <table border="1" cellpadding="6" cellspacing="0">
+    <thead><tr><th>Date</th><th>Impressions</th><th>Clicks</th><th>CTR</th><th>Avg Position</th></tr></thead>
+    <tbody>${metrics_rows}</tbody>
+  </table>
+
+  <h2>Indexing and quality issues</h2>
+  <table border="1" cellpadding="6" cellspacing="0">
+    <thead><tr><th>Issue</th><th>Severity</th><th>Status</th><th>Details</th><th>Created</th></tr></thead>
+    <tbody>${issues_rows}</tbody>
+  </table>
+</body>
+</html>

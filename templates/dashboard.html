@@ -3,7 +3,8 @@
 <head><meta charset="utf-8"><title>Dashboard</title></head>
 <body>
   <h1>Dashboard: ${username}</h1>
-  <p><a href="/logout">Logout</a></p>
+  <p><a href="/console">Open Search Console</a> | <a href="/logout">Logout</a></p>
+
   <h2>Generate API key</h2>
   <form method="post" action="/dashboard/generate">
     <label>Plan
@@ -17,7 +18,15 @@
   </form>
   <p>${message}</p>
   <pre>${latest_key}</pre>
+
   <h2>Your key prefixes</h2>
   <ul>${keys_html}</ul>
+
+  <h2>API traffic analytics (recent)</h2>
+  <div>${chart_api_traffic}</div>
+  <table border="1" cellpadding="6" cellspacing="0">
+    <thead><tr><th>Request time</th><th>Query</th><th>Latency (ms)</th><th>Result count</th></tr></thead>
+    <tbody>${usage_rows}</tbody>
+  </table>
 </body>
 </html>
