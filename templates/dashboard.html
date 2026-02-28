@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Dashboard</title></head>
+<body>
+  <h1>Dashboard: ${username}</h1>
+  <p>
+    <a href="/console">Open Search Console</a> |
+    <a href="/agent">Agent Context Studio</a> |
+    <a href="/blog">Engine Blog</a> |
+    <a href="/billing">Billing</a> |
+    <a href="/logout">Logout</a>
+  </p>
+
+  <h2>Generate API key</h2>
+  <form method="post" action="/dashboard/generate">
+    <input type="hidden" name="csrf_token" value="${csrf_token}">
+    <label>Plan
+      <select name="plan">
+        <option value="free">free</option>
+        <option value="pro">pro</option>
+        <option value="enterprise">enterprise</option>
+      </select>
+    </label>
+    <button type="submit">Generate</button>
+  </form>
+  <p>${message}</p>
+  <pre>${latest_key}</pre>
+
+  <h2>Your key prefixes</h2>
+  <ul>${keys_html}</ul>
+
+  <h2>API traffic analytics (recent)</h2>
+  <div>${chart_api_traffic}</div>
+  <table border="1" cellpadding="6" cellspacing="0">
+    <thead><tr><th>Request time</th><th>Query</th><th>Latency (ms)</th><th>Result count</th></tr></thead>
+    <tbody>${usage_rows}</tbody>
+  </table>
+</body>
+</html>

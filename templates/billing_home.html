@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Billing</title></head>
+<body>
+  <h1>Billing & Plans</h1>
+  <p><a href="/dashboard">Back to dashboard</a></p>
+
+  <p><strong>Current plan:</strong> ${current_plan}</p>
+  <p><strong>Free quota:</strong> ${free_daily_calls} search calls/day | <strong>Used today:</strong> ${today_calls}</p>
+  <p>${message}</p>
+
+  <h2>Upgrade plans (Razorpay)</h2>
+  <form method="post" action="/billing/create-order">
+    <input type="hidden" name="csrf_token" value="${csrf_token}">
+    <label>Plan
+      <select name="plan">
+        <option value="pro">pro - ₹${pro_price}/month</option>
+        <option value="enterprise">enterprise - ₹${enterprise_price}/month</option>
+      </select>
+    </label>
+    <button type="submit">Create Razorpay order</button>
+  </form>
+
+  <h3>Verify payment</h3>
+  <p>Use Razorpay callback values here if you are testing manually.</p>
+  <form method="post" action="/billing/verify">
+    <input type="hidden" name="csrf_token" value="${csrf_token}">
+    <label>Plan
+      <select name="plan">
+        <option value="pro">pro</option>
+        <option value="enterprise">enterprise</option>
+      </select>
+    </label><br>
+    <label>Order ID <input name="order_id" required></label><br>
+    <label>Payment ID <input name="payment_id" required></label><br>
+    <label>Signature <input name="signature" required></label><br>
+    <button type="submit">Verify and activate</button>
+  </form>
+
+  <h2>Payment history</h2>
+  <table border="1" cellpadding="6" cellspacing="0">
+    <thead><tr><th>Order</th><th>Payment</th><th>Amount</th><th>Plan</th><th>Status</th><th>Created</th></tr></thead>
+    <tbody>${payment_rows}</tbody>
+  </table>
+</body>
+</html>
