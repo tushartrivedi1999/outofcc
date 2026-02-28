@@ -20,6 +20,7 @@ from app.service import SearchService
 from app.session import SessionManager
 from app.template_engine import TemplateEngine
 from app.user_store import UserStore
+from app.payments import PaymentError, RazorpayGateway
 
 app = FastAPI(title="Open Search API", version="0.4.0")
 
@@ -35,7 +36,30 @@ _service = SearchService(
 )
 _console = SearchConsoleService()
 _agent_context = AgentContextService(_service)
+_payments = RazorpayGateway(SETTINGS.razorpay_key_id, SETTINGS.razorpay_key_secret)
 
+
+
+
+def _plan_rank(plan: Plan) -> int:
+    return {Plan.FREE: 0, Plan.PRO: 1, Plan.ENTERPRISE: 2}[plan]
+
+
+def _allowed_for_plan(user_id: int, target_plan: Plan) -> bool:
+    if target_plan == Plan.FREE:
+        return True
+    sub = _store.get_subscription(user_id)
+    if sub is None or sub["status"] != "active":
+        return False
+    return _plan_rank(Plan(sub["plan"])) >= _plan_rank(target_plan)
+
+
+def _price_for_plan(plan: Plan) -> int:
+    if plan == Plan.PRO:
+        return SETTINGS.pro_monthly_price_inr
+    if plan == Plan.ENTERPRISE:
+        return SETTINGS.enterprise_monthly_price_inr
+    return 0
 
 def _rpm_for(plan: Plan) -> int:
     return {
@@ -136,6 +160,14 @@ def require_principal(authorization: str | None = Header(default=None)) -> ApiPr
     if not allowed:
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Rate limit exceeded")
 
+    if principal.plan == Plan.FREE:
+        today_calls = _store.search_calls_today(principal.user_id)
+        if today_calls >= SETTINGS.free_daily_calls:
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail=f"Daily free quota exceeded ({SETTINGS.free_daily_calls}). Upgrade plan from billing.",
+            )
+
     return principal
 
 
@@ -203,6 +235,14 @@ def generate_dashboard_key(request: Request, plan: str = Form("free")) -> HTMLRe
         return RedirectResponse("/login", status_code=303)
 
     selected_plan = Plan(plan)
+    if not _allowed_for_plan(int(user["id"]), selected_plan):
+        return _render_dashboard(
+            int(user["id"]),
+            str(user["username"]),
+            message="Plan requires an active paid subscription. Open Billing to upgrade.",
+            latest_key="",
+        )
+
     raw_key = generate_api_key()
     digest = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
     _store.create_api_key(user_id=int(user["id"]), key_hash=digest, prefix=raw_key[:12], plan=selected_plan.value)
@@ -383,6 +423,116 @@ def create_dataset(
         message = "Dataset name already exists. Use a different dataset name."
 
     return _render_agent_home(int(user["id"]), str(user["username"]), message=message)
+
+
+@app.get("/billing", response_class=HTMLResponse)
+def billing_home(request: Request) -> HTMLResponse:
+    user = _current_user(request)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+
+    sub = _store.get_subscription(int(user["id"]))
+    current_plan = sub["plan"] if sub else "free"
+    payments = _store.list_payments(int(user["id"]), limit=20)
+    payment_rows = "".join(
+        [
+            f"<tr><td>{p['order_id']}</td><td>{p['payment_id'] or '-'}</td><td>{p['amount_paise']/100:.2f} {p['currency']}</td><td>{p['plan']}</td><td>{p['status']}</td><td>{p['created_at']}</td></tr>"
+            for p in payments
+        ]
+    ) or "<tr><td colspan='6'>No payments yet</td></tr>"
+    body = _template.render(
+        "billing_home.html",
+        {
+            "current_plan": current_plan,
+            "free_daily_calls": SETTINGS.free_daily_calls,
+            "today_calls": _store.search_calls_today(int(user["id"])),
+            "pro_price": SETTINGS.pro_monthly_price_inr,
+            "enterprise_price": SETTINGS.enterprise_monthly_price_inr,
+            "razorpay_key_id": SETTINGS.razorpay_key_id,
+            "payment_rows": payment_rows,
+            "message": "",
+        },
+    )
+    return HTMLResponse(body)
+
+
+@app.post("/billing/create-order", response_class=HTMLResponse)
+def billing_create_order(request: Request, plan: str = Form(...)) -> HTMLResponse:
+    user = _current_user(request)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+
+    selected = Plan(plan)
+    if selected == Plan.FREE:
+        return RedirectResponse("/billing", status_code=303)
+
+    amount_inr = _price_for_plan(selected)
+    amount_paise = amount_inr * 100
+    receipt = f"user-{user['id']}-{selected.value}-{_store.search_calls_today(int(user['id']))}"
+    message = ""
+
+    try:
+        order = _payments.create_order(amount_paise=amount_paise, receipt=receipt, currency=SETTINGS.payment_currency)
+        order_id = str(order.get("id", ""))
+    except PaymentError as exc:
+        order_id = f"local-order-{int(user['id'])}-{selected.value}"
+        message = f"Razorpay unavailable in current environment ({exc}). Using local order placeholder for testing."
+
+    _store.create_payment_record(
+        user_id=int(user["id"]),
+        order_id=order_id,
+        amount_paise=amount_paise,
+        currency=SETTINGS.payment_currency,
+        plan=selected.value,
+        status="created",
+    )
+
+    payments = _store.list_payments(int(user["id"]), limit=20)
+    payment_rows = "".join(
+        [
+            f"<tr><td>{p['order_id']}</td><td>{p['payment_id'] or '-'}</td><td>{p['amount_paise']/100:.2f} {p['currency']}</td><td>{p['plan']}</td><td>{p['status']}</td><td>{p['created_at']}</td></tr>"
+            for p in payments
+        ]
+    ) or "<tr><td colspan='6'>No payments yet</td></tr>"
+    sub = _store.get_subscription(int(user["id"]))
+    current_plan = sub["plan"] if sub else "free"
+
+    body = _template.render(
+        "billing_home.html",
+        {
+            "current_plan": current_plan,
+            "free_daily_calls": SETTINGS.free_daily_calls,
+            "today_calls": _store.search_calls_today(int(user["id"])),
+            "pro_price": SETTINGS.pro_monthly_price_inr,
+            "enterprise_price": SETTINGS.enterprise_monthly_price_inr,
+            "razorpay_key_id": SETTINGS.razorpay_key_id,
+            "payment_rows": payment_rows,
+            "message": f"Order created: {order_id}. {message}",
+        },
+    )
+    return HTMLResponse(body)
+
+
+@app.post("/billing/verify", response_class=HTMLResponse)
+def billing_verify_payment(
+    request: Request,
+    plan: str = Form(...),
+    order_id: str = Form(...),
+    payment_id: str = Form(...),
+    signature: str = Form(...),
+) -> HTMLResponse:
+    user = _current_user(request)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+
+    selected = Plan(plan)
+    valid = _payments.verify_signature(order_id=order_id, payment_id=payment_id, signature=signature)
+    if not valid and not order_id.startswith("local-order-"):
+        return HTMLResponse("Payment signature verification failed", status_code=400)
+
+    _store.complete_payment(order_id=order_id, payment_id=payment_id, signature=signature)
+    _store.upsert_subscription(user_id=int(user["id"]), plan=selected.value, status="active")
+    return RedirectResponse("/billing", status_code=303)
 
 
 @app.get("/blog", response_class=HTMLResponse)

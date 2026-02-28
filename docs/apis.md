@@ -6,6 +6,12 @@ Use API key as bearer token:
 
 `Authorization: Bearer <API_KEY>`
 
+## Quotas and plans
+
+- Free plan: `FREE_DAILY_CALLS` search calls/day (default 500)
+- If exceeded, API returns HTTP 402 (payment required)
+- Pro/Enterprise require paid subscription and paid-plan key
+
 ---
 
 ## POST /v1/search

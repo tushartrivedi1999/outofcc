@@ -126,6 +126,30 @@ class UserStore:
                     updated_at TEXT NOT NULL,
                     FOREIGN KEY(author_user_id) REFERENCES users(id)
                 );
+
+                CREATE TABLE IF NOT EXISTS subscriptions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER UNIQUE NOT NULL,
+                    plan TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    renewed_at TEXT NOT NULL,
+                    FOREIGN KEY(user_id) REFERENCES users(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS payments (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    order_id TEXT NOT NULL,
+                    payment_id TEXT,
+                    signature TEXT,
+                    amount_paise INTEGER NOT NULL,
+                    currency TEXT NOT NULL,
+                    plan TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(user_id) REFERENCES users(id)
+                );
                 """
             )
 
@@ -340,3 +364,71 @@ class UserStore:
                 "SELECT id, title, slug, summary, content_markdown, status, created_at, updated_at FROM blog_posts WHERE slug = ?",
                 (slug,),
             ).fetchone()
+
+
+    def search_calls_today(self, user_id: int) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS c
+                FROM api_usage
+                WHERE user_id = ?
+                  AND substr(request_at, 1, 10) = date('now')
+                """,
+                (user_id,),
+            ).fetchone()
+            return int(row["c"]) if row else 0
+
+    def get_subscription(self, user_id: int) -> sqlite3.Row | None:
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT user_id, plan, status, started_at, renewed_at FROM subscriptions WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+
+    def upsert_subscription(self, user_id: int, plan: str, status: str = "active") -> None:
+        now = _utc_now_iso()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO subscriptions (user_id, plan, status, started_at, renewed_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    plan = excluded.plan,
+                    status = excluded.status,
+                    renewed_at = excluded.renewed_at
+                """,
+                (user_id, plan, status, now, now),
+            )
+
+    def create_payment_record(self, user_id: int, order_id: str, amount_paise: int, currency: str, plan: str, status: str = "created") -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO payments (user_id, order_id, amount_paise, currency, plan, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (user_id, order_id, amount_paise, currency, plan, status, _utc_now_iso()),
+            )
+            return int(cur.lastrowid)
+
+    def complete_payment(self, order_id: str, payment_id: str, signature: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE payments
+                SET payment_id = ?, signature = ?, status = 'captured'
+                WHERE order_id = ?
+                """,
+                (payment_id, signature, order_id),
+            )
+
+    def list_payments(self, user_id: int, limit: int = 20) -> list[sqlite3.Row]:
+        with self._connect() as conn:
+            return list(
+                conn.execute(
+                    "SELECT order_id, payment_id, amount_paise, currency, plan, status, created_at FROM payments WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+                    (user_id, limit),
+                ).fetchall()
+            )
+

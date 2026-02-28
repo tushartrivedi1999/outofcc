@@ -6,6 +6,7 @@ A unified production-oriented platform with:
 - Agent Context Studio (Tavily-style module for LLM/agent grounding)
 - Dataset creation pipeline (Open Search/CommonCrawl-style sources)
 - Internal Engine Blog (project updates and release notes)
+- Billing + Razorpay integration for paid API plans
 
 > **Core principle:** this project is **Searx-first**. Retrieval originates from Searx, and all product modules build on top of that data backbone.
 
@@ -26,24 +27,31 @@ Comprehensive docs are in `docs/`:
 ### 1) Search API
 - Endpoint: `POST /v1/search`
 - API-key auth + plan-based rate limits
+- **Free plan quota: 500 calls/day** (configurable with `FREE_DAILY_CALLS`)
 - cache + reranking + Searx connector
 
-### 2) Open Search Console
+### 2) Billing and plans
+- Route: `/billing`
+- Razorpay order creation and payment verification
+- Free users can generate only free keys
+- Paid subscription enables pro/enterprise key generation
+
+### 3) Open Search Console
 - Route: `/console`
 - property onboarding and verification
 - analytics and issue diagnostics
 
-### 3) Agent Context Studio (Tavily alternative)
+### 4) Agent Context Studio (Tavily alternative)
 - Route: `/agent`
 - Endpoint: `POST /v1/agent/context`
 - structured context output: answer brief, citations, chunks, freshness hint
 
-### 4) Dataset creation
+### 5) Dataset creation
 - UI in `/agent`
 - API: `POST /v1/agent/datasets/create`
 - sources: `open-search`, `commoncrawl`
 
-### 5) Internal Engine Blog
+### 6) Internal Engine Blog
 - Routes: `/blog`, `/blog/new`, `/blog/{slug}`
 - publish product updates and architecture notes
 
@@ -59,6 +67,17 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
 Default admin login: `admin/admin`
+
+## Billing env setup
+
+```bash
+export FREE_DAILY_CALLS=500
+export RAZORPAY_KEY_ID=rzp_test_xxxxx
+export RAZORPAY_KEY_SECRET=xxxxx
+export PAYMENT_CURRENCY=INR
+export PRO_MONTHLY_PRICE_INR=999
+export ENTERPRISE_MONTHLY_PRICE_INR=4999
+```
 
 ## API examples
 
@@ -100,7 +119,8 @@ The current project is a strong foundation. For full production readiness:
 - move SQLite to Postgres
 - move in-memory limiter/cache to Redis
 - add real DNS/file probe verification workers
-- add observability, SLOs, RBAC, billing, and abuse controls
+- add observability, SLOs, RBAC, billing analytics, and abuse controls
+- add Razorpay webhook ingestion + retries
 
 ## GitHub push
 
@@ -108,7 +128,6 @@ The current project is a strong foundation. For full production readiness:
 git remote add origin https://github.com/<your-org-or-user>/<repo>.git
 git push -u origin <your-branch>
 ```
-
 
 ## Code optimization highlights
 

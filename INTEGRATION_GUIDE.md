@@ -1,6 +1,6 @@
 # Integration Guide (Step-by-Step)
 
-This guide explains how to integrate the project into an existing search or AI-agent product.
+This guide explains how to integrate the platform into an existing search or AI product.
 
 ## 1) Boot the platform
 
@@ -13,42 +13,48 @@ set -a && source .env && set +a
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-## 2) Create account and API key
+## 2) Configure Searx and billing
 
-1. Open `http://localhost:8000/login`
-2. Login with `admin/admin` or create your own user at `/signup`
-3. Open `/dashboard`
-4. Generate a plan-based API key
+In `.env`:
+- set `SEARX_BASE_URL`
+- set Razorpay credentials (`RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`)
+- free quota is controlled by `FREE_DAILY_CALLS` (default 500/day)
 
-## 3) Integrate search API into your app
+## 3) User onboarding and key issuance
 
-Use `POST /v1/search` with `Authorization: Bearer <API_KEY>`.
+1. Login at `/login` (`admin/admin` bootstrap)
+2. Open `/dashboard`
+3. Generate a `free` key immediately
+4. To generate `pro`/`enterprise` keys, open `/billing` and activate subscription
 
-## 4) Integrate agent-grounding context API (Tavily alternative)
+## 4) Free quota and upgrades
 
-Use `POST /v1/agent/context` to receive structured web context:
-- short answer brief
-- citations
-- normalized context chunks
-- freshness hint
+- `free` API keys are limited to `FREE_DAILY_CALLS` search calls/day (default 500)
+- once exceeded, API returns payment-required response
+- use `/billing` to create and verify Razorpay payments, then generate higher-plan keys
 
-## 5) Integrate dataset generation API
+## 5) Integrate APIs
 
-Use `POST /v1/agent/datasets/create` to create datasets from:
-- `open-search`
-- `commoncrawl` (connector-style simulated rows in current build)
+- Search: `POST /v1/search`
+- Agent context: `POST /v1/agent/context`
+- Dataset creation: `POST /v1/agent/datasets/create`
 
-## 6) Enable Search Console workflows for your users
+## 6) Search Console usage
 
 1. Open `/console`
 2. Add property
-3. Verify via DNS or URL-prefix token
-4. Inspect analytics and issue tables
+3. Verify by DNS or URL-prefix token
+4. Use analytics + issue tables
 
-## 7) Production checklist
+## 7) Internal blog workflow
 
-- Replace SQLite with Postgres
-- Replace in-memory cache/ratelimiter with Redis
-- Add background workers for crawl and metrics ingestion
-- Add proper external DNS/file verification probes
-- Add billing + quotas + abuse controls
+- Publish updates at `/blog/new`
+- Read posts at `/blog`
+- Use this for product release communication
+
+## 8) Production checklist
+
+- Postgres + Redis migration
+- async verification workers
+- webhook-based Razorpay verification flow
+- observability, RBAC, billing analytics, abuse controls

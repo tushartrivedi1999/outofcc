@@ -11,31 +11,30 @@ set -a && source .env && set +a
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-## Stress and load
+## Billing setup (Razorpay)
 
-Use:
+Set env vars:
+- `RAZORPAY_KEY_ID`
+- `RAZORPAY_KEY_SECRET`
+- `PAYMENT_CURRENCY`
+- `PRO_MONTHLY_PRICE_INR`
+- `ENTERPRISE_MONTHLY_PRICE_INR`
+
+Then use `/billing` route for order creation and payment verification.
+
+## Stress and load
 
 ```bash
 python scripts/load_test.py --base-url http://localhost:8000 --api-key <KEY> --concurrency 50 --requests 2000
 ```
 
-Metrics:
-- success/failure
-- distortion count
-- status distribution
-- p50/p95/p99 latency
-
 ## Monkey testing
-
-Use randomized input tests against store/services:
 
 ```bash
 python scripts/monkey_test.py
 ```
 
 ## Load-balance simulation
-
-Use internal simulation utility:
 
 ```bash
 python scripts/load_balance_test.py
@@ -48,9 +47,10 @@ python scripts/load_balance_test.py
 - [ ] Monitoring (metrics/logs/traces)
 - [ ] Autoscaling and health checks
 - [ ] Background workers for telemetry and verification probes
+- [ ] Razorpay webhook pipeline for async payment state updates
 
 ## Performance tuning notes
 
-- SQLite uses WAL mode to improve read/write concurrency on single-node deployments.
-- Batch writes use `executemany` for lower overhead under dataset/metrics ingestion.
-- Keep `CACHE_TTL_S` and rate limits tuned to your traffic profile.
+- SQLite uses WAL mode for better read/write concurrency.
+- Batch writes use `executemany`.
+- Free plan daily quota guard is DB-count based per UTC day.

@@ -11,6 +11,7 @@ from app.rate_limit import SlidingWindowRateLimiter
 from app.security import generate_api_key, hash_password, verify_password
 from app.session import SessionManager
 from app.template_engine import TemplateEngine
+from app.payments import RazorpayGateway
 from app.user_store import UserStore
 from scripts.load_test import is_distorted
 
@@ -107,8 +108,20 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(len(store.list_blog_posts()), 1)
             self.assertIsNotNone(store.find_blog_post_by_slug("release-notes"))
 
+            self.assertGreaterEqual(store.search_calls_today(user_id), 1)
+            store.upsert_subscription(user_id, "pro", "active")
+            self.assertEqual(store.get_subscription(user_id)["plan"], "pro")
+            pid = store.create_payment_record(user_id, "order_1", 99900, "INR", "pro")
+            self.assertGreater(pid, 0)
+            store.complete_payment("order_1", "pay_1", "sig")
+            self.assertEqual(len(store.list_payments(user_id)), 1)
+
             svg = svc.build_svg_bars([1, 3, 2])
             self.assertIn("<svg", svg)
+
+    def test_razorpay_signature_verifier(self):
+        gateway = RazorpayGateway("key", "secret")
+        self.assertFalse(gateway.verify_signature("o", "p", "x"))
 
     def test_generate_api_key_prefix(self):
         self.assertTrue(generate_api_key().startswith("osk_"))
