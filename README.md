@@ -134,3 +134,6 @@ git push -u origin <your-branch>
 - Shared helpers removed duplicate rendering and dataset-row generation logic.
 - SQLite is configured with WAL + foreign key enforcement for safer concurrent usage.
 - Bulk inserts now use batched writes for better throughput under load.
+
+- Billing rendering and dataset row generation now use shared helpers to reduce duplicate code paths.
+- SQLite schema now includes indexes for high-frequency query paths (usage, payments, sites, datasets).

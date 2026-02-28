@@ -54,3 +54,5 @@ python scripts/load_balance_test.py
 - SQLite uses WAL mode for better read/write concurrency.
 - Batch writes use `executemany`.
 - Free plan daily quota guard is DB-count based per UTC day.
+- SQLite query paths are index-backed for common user/day and user/payment lookups.
+

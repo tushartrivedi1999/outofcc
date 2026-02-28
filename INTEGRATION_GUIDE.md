@@ -58,3 +58,10 @@ In `.env`:
 - async verification workers
 - webhook-based Razorpay verification flow
 - observability, RBAC, billing analytics, abuse controls
+
+## 9) Optimization notes
+
+- Reused helper paths reduce repeated logic in route handlers.
+- SQLite now includes indexes for API usage, payments, sites, datasets, and blog slug lookups.
+- Keep `FREE_DAILY_CALLS` and plan RPM values aligned with your commercial policy.
+

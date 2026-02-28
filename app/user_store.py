@@ -150,6 +150,16 @@ class UserStore:
                     created_at TEXT NOT NULL,
                     FOREIGN KEY(user_id) REFERENCES users(id)
                 );
+
+                CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
+                CREATE INDEX IF NOT EXISTS idx_sites_user ON sites(user_id);
+                CREATE INDEX IF NOT EXISTS idx_site_metrics_site_date ON site_metrics(site_id, metric_date);
+                CREATE INDEX IF NOT EXISTS idx_site_issues_site ON site_issues(site_id);
+                CREATE INDEX IF NOT EXISTS idx_api_usage_user_day ON api_usage(user_id, request_at);
+                CREATE INDEX IF NOT EXISTS idx_datasets_user ON datasets(user_id);
+                CREATE INDEX IF NOT EXISTS idx_blog_slug ON blog_posts(slug);
+                CREATE INDEX IF NOT EXISTS idx_subscriptions_user ON subscriptions(user_id);
+                CREATE INDEX IF NOT EXISTS idx_payments_user_created ON payments(user_id, created_at);
                 """
             )
 

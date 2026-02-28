@@ -42,3 +42,6 @@ The platform uses Searx as the upstream search aggregator:
 - Reduced route-level duplication in `app/main.py` via shared render/build helpers.
 - Switched SQLite connection defaults to WAL + NORMAL sync + FK enforcement for better concurrent behavior.
 - Switched bulk inserts to `executemany` for metrics and dataset rows to reduce DB overhead.
+- Added reusable billing/dataset helper functions to reduce route duplication and improve maintainability.
+- Added targeted SQLite indexes for common query patterns (usage, payments, sites, datasets).
+

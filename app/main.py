@@ -121,6 +121,33 @@ def _render_agent_home(user_id: int, username: str, message: str = "", context_j
 
 
 
+
+
+def _render_billing_home(user_id: int, message: str = "") -> HTMLResponse:
+    sub = _store.get_subscription(user_id)
+    current_plan = sub["plan"] if sub else "free"
+    payments = _store.list_payments(user_id, limit=20)
+    payment_rows = "".join(
+        [
+            f"<tr><td>{p['order_id']}</td><td>{p['payment_id'] or '-'}</td><td>{p['amount_paise']/100:.2f} {p['currency']}</td><td>{p['plan']}</td><td>{p['status']}</td><td>{p['created_at']}</td></tr>"
+            for p in payments
+        ]
+    ) or "<tr><td colspan='6'>No payments yet</td></tr>"
+    body = _template.render(
+        "billing_home.html",
+        {
+            "current_plan": current_plan,
+            "free_daily_calls": SETTINGS.free_daily_calls,
+            "today_calls": _store.search_calls_today(user_id),
+            "pro_price": SETTINGS.pro_monthly_price_inr,
+            "enterprise_price": SETTINGS.enterprise_monthly_price_inr,
+            "razorpay_key_id": SETTINGS.razorpay_key_id,
+            "payment_rows": payment_rows,
+            "message": message,
+        },
+    )
+    return HTMLResponse(body)
+
 def _render_console_home(user_id: int, username: str, message: str = "") -> HTMLResponse:
     sites = _store.list_sites(user_id)
     rows = [
@@ -133,15 +160,12 @@ def _render_console_home(user_id: int, username: str, message: str = "") -> HTML
 
 
 def _build_dataset_rows(source: str, query: str, rows: int) -> list[dict[str, str]]:
-    if source == "open-search":
-        return [
-            {"content": f"Search-derived row {i+1} for '{query}'", "source_url": f"https://dataset.local/search/{i+1}"}
-            for i in range(rows)
-        ]
-    return [
-        {"content": f"CommonCrawl-derived row {i+1} for '{query}'", "source_url": f"https://commoncrawl.org/record/{i+1}"}
-        for i in range(rows)
-    ]
+    source_map = {
+        "open-search": ("Search-derived", "https://dataset.local/search"),
+        "commoncrawl": ("CommonCrawl-derived", "https://commoncrawl.org/record"),
+    }
+    label, base = source_map.get(source, source_map["open-search"])
+    return [{"content": f"{label} row {i+1} for '{query}'", "source_url": f"{base}/{i+1}"} for i in range(rows)]
 
 def _slugify(value: str) -> str:
     slug = re.sub(r"[^a-zA-Z0-9]+", "-", value.strip().lower()).strip("-")
@@ -430,30 +454,7 @@ def billing_home(request: Request) -> HTMLResponse:
     user = _current_user(request)
     if user is None:
         return RedirectResponse("/login", status_code=303)
-
-    sub = _store.get_subscription(int(user["id"]))
-    current_plan = sub["plan"] if sub else "free"
-    payments = _store.list_payments(int(user["id"]), limit=20)
-    payment_rows = "".join(
-        [
-            f"<tr><td>{p['order_id']}</td><td>{p['payment_id'] or '-'}</td><td>{p['amount_paise']/100:.2f} {p['currency']}</td><td>{p['plan']}</td><td>{p['status']}</td><td>{p['created_at']}</td></tr>"
-            for p in payments
-        ]
-    ) or "<tr><td colspan='6'>No payments yet</td></tr>"
-    body = _template.render(
-        "billing_home.html",
-        {
-            "current_plan": current_plan,
-            "free_daily_calls": SETTINGS.free_daily_calls,
-            "today_calls": _store.search_calls_today(int(user["id"])),
-            "pro_price": SETTINGS.pro_monthly_price_inr,
-            "enterprise_price": SETTINGS.enterprise_monthly_price_inr,
-            "razorpay_key_id": SETTINGS.razorpay_key_id,
-            "payment_rows": payment_rows,
-            "message": "",
-        },
-    )
-    return HTMLResponse(body)
+    return _render_billing_home(int(user["id"]))
 
 
 @app.post("/billing/create-order", response_class=HTMLResponse)
@@ -487,30 +488,7 @@ def billing_create_order(request: Request, plan: str = Form(...)) -> HTMLRespons
         status="created",
     )
 
-    payments = _store.list_payments(int(user["id"]), limit=20)
-    payment_rows = "".join(
-        [
-            f"<tr><td>{p['order_id']}</td><td>{p['payment_id'] or '-'}</td><td>{p['amount_paise']/100:.2f} {p['currency']}</td><td>{p['plan']}</td><td>{p['status']}</td><td>{p['created_at']}</td></tr>"
-            for p in payments
-        ]
-    ) or "<tr><td colspan='6'>No payments yet</td></tr>"
-    sub = _store.get_subscription(int(user["id"]))
-    current_plan = sub["plan"] if sub else "free"
-
-    body = _template.render(
-        "billing_home.html",
-        {
-            "current_plan": current_plan,
-            "free_daily_calls": SETTINGS.free_daily_calls,
-            "today_calls": _store.search_calls_today(int(user["id"])),
-            "pro_price": SETTINGS.pro_monthly_price_inr,
-            "enterprise_price": SETTINGS.enterprise_monthly_price_inr,
-            "razorpay_key_id": SETTINGS.razorpay_key_id,
-            "payment_rows": payment_rows,
-            "message": f"Order created: {order_id}. {message}",
-        },
-    )
-    return HTMLResponse(body)
+    return _render_billing_home(int(user["id"]), message=f"Order created: {order_id}. {message}")
 
 
 @app.post("/billing/verify", response_class=HTMLResponse)
