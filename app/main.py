@@ -24,7 +24,7 @@ from app.payments import PaymentError, RazorpayGateway
 
 app = FastAPI(title="Open Search API", version="0.4.0")
 
-_store = UserStore(SETTINGS.db_path)
+_store = UserStore(SETTINGS.db_path, backend=SETTINGS.db_backend, dsn=SETTINGS.db_dsn)
 _store.ensure_admin_user()
 _template = TemplateEngine("templates")
 _session = SessionManager(secret=SETTINGS.session_secret)

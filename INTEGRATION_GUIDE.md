@@ -13,10 +13,13 @@ set -a && source .env && set +a
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-## 2) Configure Searx and billing
+## 2) Configure Searx, database, and billing
 
 In `.env`:
 - set `SEARX_BASE_URL`
+- choose DB backend:
+  - SQLite: `DB_BACKEND=sqlite`, `DB_PATH=data/app.db`
+  - PostgreSQL: `DB_BACKEND=postgres`, `DB_DSN=postgresql://user:pass@host:5432/dbname`
 - set Razorpay credentials (`RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`)
 - free quota is controlled by `FREE_DAILY_CALLS` (default 500/day)
 
@@ -65,3 +68,8 @@ In `.env`:
 - SQLite now includes indexes for API usage, payments, sites, datasets, and blog slug lookups.
 - Keep `FREE_DAILY_CALLS` and plan RPM values aligned with your commercial policy.
 
+## 10) DB backend support notes
+
+- One `UserStore` supports both SQLite and PostgreSQL.
+- Schema creation and conflict-handling logic adapt automatically to selected backend.
+- For production, prefer PostgreSQL and connection pooling at the process layer.

@@ -44,4 +44,5 @@ The platform uses Searx as the upstream search aggregator:
 - Switched bulk inserts to `executemany` for metrics and dataset rows to reduce DB overhead.
 - Added reusable billing/dataset helper functions to reduce route duplication and improve maintainability.
 - Added targeted SQLite indexes for common query patterns (usage, payments, sites, datasets).
+- UserStore now has dual-backend support (SQLite/PostgreSQL) with backend-aware DDL/DML behavior.
 

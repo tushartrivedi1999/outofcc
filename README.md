@@ -68,6 +68,11 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 Default admin login: `admin/admin`
 
+## DB backend options
+
+- SQLite (default): `DB_BACKEND=sqlite`, `DB_PATH=data/app.db`
+- PostgreSQL: `DB_BACKEND=postgres`, `DB_DSN=postgresql://user:pass@host:5432/dbname`
+
 ## Billing env setup
 
 ```bash
@@ -131,6 +136,8 @@ git push -u origin <your-branch>
 
 ## Code optimization highlights
 
+- UserStore now supports SQLite and PostgreSQL via one unified store interface (`DB_BACKEND`).
+- Backend-specific upsert/ignore SQL paths are optimized per database engine.
 - Shared helpers removed duplicate rendering and dataset-row generation logic.
 - SQLite is configured with WAL + foreign key enforcement for safer concurrent usage.
 - Bulk inserts now use batched writes for better throughput under load.

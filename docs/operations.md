@@ -55,4 +55,5 @@ python scripts/load_balance_test.py
 - Batch writes use `executemany`.
 - Free plan daily quota guard is DB-count based per UTC day.
 - SQLite query paths are index-backed for common user/day and user/payment lookups.
+- Set `DB_BACKEND=postgres` + `DB_DSN` to run with PostgreSQL in production.
 
