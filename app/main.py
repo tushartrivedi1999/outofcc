@@ -95,6 +95,30 @@ def _render_agent_home(user_id: int, username: str, message: str = "", context_j
 
 
 
+
+
+def _render_console_home(user_id: int, username: str, message: str = "") -> HTMLResponse:
+    sites = _store.list_sites(user_id)
+    rows = [
+        f"<tr><td><a href='/console/site/{site['id']}'>{site['domain']}</a></td><td>{'verified' if int(site['verified']) == 1 else 'pending'}</td><td>{site['verification_method'] or '-'}</td><td>{site['created_at']}</td></tr>"
+        for site in sites
+    ]
+    table_rows = "".join(rows) or "<tr><td colspan='4'>No properties yet</td></tr>"
+    body = _template.render("console_home.html", {"username": username, "sites_rows": table_rows, "message": message})
+    return HTMLResponse(body)
+
+
+def _build_dataset_rows(source: str, query: str, rows: int) -> list[dict[str, str]]:
+    if source == "open-search":
+        return [
+            {"content": f"Search-derived row {i+1} for '{query}'", "source_url": f"https://dataset.local/search/{i+1}"}
+            for i in range(rows)
+        ]
+    return [
+        {"content": f"CommonCrawl-derived row {i+1} for '{query}'", "source_url": f"https://commoncrawl.org/record/{i+1}"}
+        for i in range(rows)
+    ]
+
 def _slugify(value: str) -> str:
     slug = re.sub(r"[^a-zA-Z0-9]+", "-", value.strip().lower()).strip("-")
     return slug or "post"
@@ -196,17 +220,7 @@ def console_home(request: Request) -> HTMLResponse:
     user = _current_user(request)
     if user is None:
         return RedirectResponse("/login", status_code=303)
-
-    sites = _store.list_sites(int(user["id"]))
-    rows = []
-    for site in sites:
-        badge = "verified" if int(site["verified"]) == 1 else "pending"
-        rows.append(
-            f"<tr><td><a href='/console/site/{site['id']}'>{site['domain']}</a></td><td>{badge}</td><td>{site['verification_method'] or '-'}</td><td>{site['created_at']}</td></tr>"
-        )
-    table_rows = "".join(rows) or "<tr><td colspan='4'>No properties yet</td></tr>"
-    body = _template.render("console_home.html", {"username": user["username"], "sites_rows": table_rows, "message": ""})
-    return HTMLResponse(body)
+    return _render_console_home(int(user["id"]), str(user["username"]))
 
 
 @app.post("/console/add", response_class=HTMLResponse)
@@ -222,17 +236,7 @@ def console_add_site(request: Request, domain: str = Form(...)) -> HTMLResponse:
         _store.create_site(int(user["id"]), clean_domain, token)
     except Exception:
         message = "This property already exists in your account."
-
-    sites = _store.list_sites(int(user["id"]))
-    rows = []
-    for site in sites:
-        badge = "verified" if int(site["verified"]) == 1 else "pending"
-        rows.append(
-            f"<tr><td><a href='/console/site/{site['id']}'>{site['domain']}</a></td><td>{badge}</td><td>{site['verification_method'] or '-'}</td><td>{site['created_at']}</td></tr>"
-        )
-    table_rows = "".join(rows) or "<tr><td colspan='4'>No properties yet</td></tr>"
-    body = _template.render("console_home.html", {"username": user["username"], "sites_rows": table_rows, "message": message})
-    return HTMLResponse(body)
+    return _render_console_home(int(user["id"]), str(user["username"]), message=message)
 
 
 @app.get("/console/site/{site_id}", response_class=HTMLResponse)
@@ -373,14 +377,7 @@ def create_dataset(
     safe_rows = max(10, min(rows, 5000))
     try:
         dataset_id = _store.create_dataset(int(user["id"]), name.strip(), source, query.strip(), safe_rows)
-        generated_rows = []
-        if source == "open-search":
-            for i in range(safe_rows):
-                generated_rows.append({"content": f"Search-derived row {i+1} for '{query}'", "source_url": f"https://dataset.local/search/{i+1}"})
-        else:
-            for i in range(safe_rows):
-                generated_rows.append({"content": f"CommonCrawl-derived row {i+1} for '{query}'", "source_url": f"https://commoncrawl.org/record/{i+1}"})
-        _store.add_dataset_rows(dataset_id, generated_rows)
+        _store.add_dataset_rows(dataset_id, _build_dataset_rows(source, query, safe_rows))
         message = f"Dataset '{name}' created with {safe_rows} rows."
     except Exception:
         message = "Dataset name already exists. Use a different dataset name."
@@ -487,14 +484,7 @@ def create_dataset_api(
     principal: ApiPrincipal = Depends(require_principal),
 ) -> JSONResponse:
     dataset_id = _store.create_dataset(principal.user_id, body.name, body.source, body.query, body.rows)
-    rows_payload = []
-    if body.source == "open-search":
-        for i in range(body.rows):
-            rows_payload.append({"content": f"Search-derived row {i+1} for '{body.query}'", "source_url": f"https://dataset.local/search/{i+1}"})
-    else:
-        for i in range(body.rows):
-            rows_payload.append({"content": f"CommonCrawl-derived row {i+1} for '{body.query}'", "source_url": f"https://commoncrawl.org/record/{i+1}"})
-    _store.add_dataset_rows(dataset_id, rows_payload)
+    _store.add_dataset_rows(dataset_id, _build_dataset_rows(body.source, body.query, body.rows))
     return JSONResponse({"dataset_id": dataset_id, "rows": body.rows, "source": body.source, "status": "ready"})
 
 

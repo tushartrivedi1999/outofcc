@@ -36,3 +36,9 @@ The platform uses Searx as the upstream search aggregator:
 - Replace in-memory limiter/cache with Redis
 - Run multi-worker ASGI and horizontal autoscaling
 - Add async workers for verification probes, crawl telemetry, and issue generation
+
+## Optimization updates
+
+- Reduced route-level duplication in `app/main.py` via shared render/build helpers.
+- Switched SQLite connection defaults to WAL + NORMAL sync + FK enforcement for better concurrent behavior.
+- Switched bulk inserts to `executemany` for metrics and dataset rows to reduce DB overhead.

@@ -108,3 +108,10 @@ The current project is a strong foundation. For full production readiness:
 git remote add origin https://github.com/<your-org-or-user>/<repo>.git
 git push -u origin <your-branch>
 ```
+
+
+## Code optimization highlights
+
+- Shared helpers removed duplicate rendering and dataset-row generation logic.
+- SQLite is configured with WAL + foreign key enforcement for safer concurrent usage.
+- Bulk inserts now use batched writes for better throughput under load.

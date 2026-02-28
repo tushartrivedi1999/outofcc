@@ -48,3 +48,9 @@ python scripts/load_balance_test.py
 - [ ] Monitoring (metrics/logs/traces)
 - [ ] Autoscaling and health checks
 - [ ] Background workers for telemetry and verification probes
+
+## Performance tuning notes
+
+- SQLite uses WAL mode to improve read/write concurrency on single-node deployments.
+- Batch writes use `executemany` for lower overhead under dataset/metrics ingestion.
+- Keep `CACHE_TTL_S` and rate limits tuned to your traffic profile.

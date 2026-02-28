@@ -7,6 +7,10 @@ from pathlib import Path
 from app.security import hash_password
 
 
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 class UserStore:
     def __init__(self, db_path: str) -> None:
         self._db_path = db_path
@@ -16,6 +20,9 @@ class UserStore:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self._db_path)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA foreign_keys=ON")
         return conn
 
     def _init_db(self) -> None:
@@ -74,7 +81,6 @@ class UserStore:
                     FOREIGN KEY(site_id) REFERENCES sites(id)
                 );
 
-
                 CREATE TABLE IF NOT EXISTS api_usage (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER NOT NULL,
@@ -124,11 +130,10 @@ class UserStore:
             )
 
     def create_user(self, username: str, password: str) -> int:
-        now = datetime.now(timezone.utc).isoformat()
         with self._connect() as conn:
             cur = conn.execute(
                 "INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)",
-                (username, hash_password(password), now),
+                (username, hash_password(password), _utc_now_iso()),
             )
             return int(cur.lastrowid)
 
@@ -138,176 +143,175 @@ class UserStore:
 
     def get_user_by_username(self, username: str) -> sqlite3.Row | None:
         with self._connect() as conn:
-            row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
-            return row
+            return conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
 
     def find_user_by_id(self, user_id: int) -> sqlite3.Row | None:
         with self._connect() as conn:
-            row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-            return row
+            return conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
 
     def create_api_key(self, user_id: int, key_hash: str, prefix: str, plan: str) -> None:
-        now = datetime.now(timezone.utc).isoformat()
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO api_keys (user_id, key_hash, prefix, plan, created_at) VALUES (?, ?, ?, ?, ?)",
-                (user_id, key_hash, prefix, plan, now),
+                (user_id, key_hash, prefix, plan, _utc_now_iso()),
             )
 
     def list_api_keys(self, user_id: int) -> list[sqlite3.Row]:
         with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT prefix, plan, created_at FROM api_keys WHERE user_id = ? ORDER BY id DESC",
-                (user_id,),
-            ).fetchall()
-            return list(rows)
+            return list(
+                conn.execute(
+                    "SELECT prefix, plan, created_at FROM api_keys WHERE user_id = ? ORDER BY id DESC",
+                    (user_id,),
+                ).fetchall()
+            )
 
     def find_api_key_by_hash(self, key_hash: str) -> sqlite3.Row | None:
         with self._connect() as conn:
-            row = conn.execute(
+            return conn.execute(
                 "SELECT user_id, key_hash, plan FROM api_keys WHERE key_hash = ?",
                 (key_hash,),
             ).fetchone()
-            return row
 
     def create_site(self, user_id: int, domain: str, verification_token: str) -> int:
-        now = datetime.now(timezone.utc).isoformat()
         with self._connect() as conn:
             cur = conn.execute(
                 "INSERT INTO sites (user_id, domain, verification_token, created_at) VALUES (?, ?, ?, ?)",
-                (user_id, domain, verification_token, now),
+                (user_id, domain, verification_token, _utc_now_iso()),
             )
             return int(cur.lastrowid)
 
     def list_sites(self, user_id: int) -> list[sqlite3.Row]:
         with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT id, domain, verified, verification_method, created_at FROM sites WHERE user_id = ? ORDER BY id DESC",
-                (user_id,),
-            ).fetchall()
-            return list(rows)
+            return list(
+                conn.execute(
+                    "SELECT id, domain, verified, verification_method, created_at FROM sites WHERE user_id = ? ORDER BY id DESC",
+                    (user_id,),
+                ).fetchall()
+            )
 
     def find_site(self, site_id: int, user_id: int) -> sqlite3.Row | None:
         with self._connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM sites WHERE id = ? AND user_id = ?",
-                (site_id, user_id),
-            ).fetchone()
-            return row
+            return conn.execute("SELECT * FROM sites WHERE id = ? AND user_id = ?", (site_id, user_id)).fetchone()
 
     def mark_site_verified(self, site_id: int, method: str) -> None:
         with self._connect() as conn:
-            conn.execute(
-                "UPDATE sites SET verified = 1, verification_method = ? WHERE id = ?",
-                (method, site_id),
-            )
+            conn.execute("UPDATE sites SET verified = 1, verification_method = ? WHERE id = ?", (method, site_id))
 
     def seed_site_metrics(self, site_id: int, metrics: list[dict[str, int | float | str]]) -> None:
+        payload = [
+            (
+                site_id,
+                str(row["metric_date"]),
+                int(row["impressions"]),
+                int(row["clicks"]),
+                float(row["ctr"]),
+                float(row["avg_position"]),
+            )
+            for row in metrics
+        ]
         with self._connect() as conn:
-            for row in metrics:
-                conn.execute(
-                    """
-                    INSERT OR IGNORE INTO site_metrics (site_id, metric_date, impressions, clicks, ctr, avg_position)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        site_id,
-                        str(row["metric_date"]),
-                        int(row["impressions"]),
-                        int(row["clicks"]),
-                        float(row["ctr"]),
-                        float(row["avg_position"]),
-                    ),
-                )
+            conn.executemany(
+                """
+                INSERT OR IGNORE INTO site_metrics (site_id, metric_date, impressions, clicks, ctr, avg_position)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                payload,
+            )
 
     def add_site_issue(self, site_id: int, issue_type: str, severity: str, status: str, details: str) -> None:
-        now = datetime.now(timezone.utc).isoformat()
         with self._connect() as conn:
             conn.execute(
                 """
                 INSERT INTO site_issues (site_id, issue_type, severity, status, details, created_at)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (site_id, issue_type, severity, status, details, now),
+                (site_id, issue_type, severity, status, details, _utc_now_iso()),
             )
 
     def list_site_metrics(self, site_id: int) -> list[sqlite3.Row]:
         with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT metric_date, impressions, clicks, ctr, avg_position FROM site_metrics WHERE site_id = ? ORDER BY metric_date",
-                (site_id,),
-            ).fetchall()
-            return list(rows)
+            return list(
+                conn.execute(
+                    "SELECT metric_date, impressions, clicks, ctr, avg_position FROM site_metrics WHERE site_id = ? ORDER BY metric_date",
+                    (site_id,),
+                ).fetchall()
+            )
 
     def list_site_issues(self, site_id: int) -> list[sqlite3.Row]:
         with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT issue_type, severity, status, details, created_at FROM site_issues WHERE site_id = ? ORDER BY id DESC",
-                (site_id,),
-            ).fetchall()
-            return list(rows)
-
+            return list(
+                conn.execute(
+                    "SELECT issue_type, severity, status, details, created_at FROM site_issues WHERE site_id = ? ORDER BY id DESC",
+                    (site_id,),
+                ).fetchall()
+            )
 
     def log_api_usage(self, user_id: int, query: str, took_ms: int, result_count: int) -> None:
-        now = datetime.now(timezone.utc).isoformat()
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO api_usage (user_id, request_at, query, took_ms, result_count) VALUES (?, ?, ?, ?, ?)",
-                (user_id, now, query[:512], took_ms, result_count),
+                (user_id, _utc_now_iso(), query[:512], took_ms, result_count),
             )
 
     def list_recent_api_usage(self, user_id: int, limit: int = 30) -> list[sqlite3.Row]:
         with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT request_at, query, took_ms, result_count FROM api_usage WHERE user_id = ? ORDER BY id DESC LIMIT ?",
-                (user_id, limit),
-            ).fetchall()
-            return list(rows)
-
+            return list(
+                conn.execute(
+                    "SELECT request_at, query, took_ms, result_count FROM api_usage WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+                    (user_id, limit),
+                ).fetchall()
+            )
 
     def create_dataset(self, user_id: int, name: str, source: str, query: str, rows_count: int) -> int:
-        now = datetime.now(timezone.utc).isoformat()
         with self._connect() as conn:
             cur = conn.execute(
                 """
                 INSERT INTO datasets (user_id, name, source, query, rows_count, status, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (user_id, name, source, query, rows_count, "ready", now),
+                (user_id, name, source, query, rows_count, "ready", _utc_now_iso()),
             )
             return int(cur.lastrowid)
 
     def add_dataset_rows(self, dataset_id: int, rows: list[dict[str, str]]) -> None:
+        payload = [(dataset_id, index, row.get("content", ""), row.get("source_url", "")) for index, row in enumerate(rows)]
         with self._connect() as conn:
-            for index, row in enumerate(rows):
-                conn.execute(
-                    """
-                    INSERT OR IGNORE INTO dataset_rows (dataset_id, row_index, content, source_url)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    (dataset_id, index, row.get("content", ""), row.get("source_url", "")),
-                )
+            conn.executemany(
+                """
+                INSERT OR IGNORE INTO dataset_rows (dataset_id, row_index, content, source_url)
+                VALUES (?, ?, ?, ?)
+                """,
+                payload,
+            )
 
     def list_datasets(self, user_id: int) -> list[sqlite3.Row]:
         with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT id, name, source, query, rows_count, status, created_at FROM datasets WHERE user_id = ? ORDER BY id DESC",
-                (user_id,),
-            ).fetchall()
-            return list(rows)
+            return list(
+                conn.execute(
+                    "SELECT id, name, source, query, rows_count, status, created_at FROM datasets WHERE user_id = ? ORDER BY id DESC",
+                    (user_id,),
+                ).fetchall()
+            )
 
     def dataset_rows(self, dataset_id: int) -> list[sqlite3.Row]:
         with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT row_index, content, source_url FROM dataset_rows WHERE dataset_id = ? ORDER BY row_index",
-                (dataset_id,),
-            ).fetchall()
-            return list(rows)
+            return list(
+                conn.execute(
+                    "SELECT row_index, content, source_url FROM dataset_rows WHERE dataset_id = ? ORDER BY row_index",
+                    (dataset_id,),
+                ).fetchall()
+            )
 
-
-
-    def create_blog_post(self, author_user_id: int, title: str, slug: str, summary: str, content_markdown: str, status: str = "published") -> int:
-        now = datetime.now(timezone.utc).isoformat()
+    def create_blog_post(
+        self,
+        author_user_id: int,
+        title: str,
+        slug: str,
+        summary: str,
+        content_markdown: str,
+        status: str = "published",
+    ) -> int:
+        now = _utc_now_iso()
         with self._connect() as conn:
             cur = conn.execute(
                 """
@@ -332,9 +336,7 @@ class UserStore:
 
     def find_blog_post_by_slug(self, slug: str) -> sqlite3.Row | None:
         with self._connect() as conn:
-            row = conn.execute(
+            return conn.execute(
                 "SELECT id, title, slug, summary, content_markdown, status, created_at, updated_at FROM blog_posts WHERE slug = ?",
                 (slug,),
             ).fetchone()
-            return row
-
