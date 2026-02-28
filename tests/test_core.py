@@ -103,6 +103,10 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(len(store.list_datasets(user_id)), 1)
             self.assertEqual(len(store.dataset_rows(dataset_id)), 1)
 
+            store.create_blog_post(user_id, "Release Notes", "release-notes", "sum", "content", "published")
+            self.assertEqual(len(store.list_blog_posts()), 1)
+            self.assertIsNotNone(store.find_blog_post_by_slug("release-notes"))
+
             svg = svc.build_svg_bars([1, 3, 2])
             self.assertIn("<svg", svg)
 

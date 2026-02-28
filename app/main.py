@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 
 from fastapi import Depends, FastAPI, Form, Header, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -91,6 +92,12 @@ def _render_agent_home(user_id: int, username: str, message: str = "", context_j
     )
     return HTMLResponse(body)
 
+
+
+
+def _slugify(value: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", value.strip().lower()).strip("-")
+    return slug or "post"
 
 def require_principal(authorization: str | None = Header(default=None)) -> ApiPrincipal:
     token = None
@@ -379,6 +386,79 @@ def create_dataset(
         message = "Dataset name already exists. Use a different dataset name."
 
     return _render_agent_home(int(user["id"]), str(user["username"]), message=message)
+
+
+@app.get("/blog", response_class=HTMLResponse)
+def blog_home(request: Request) -> HTMLResponse:
+    user = _current_user(request)
+    username = user["username"] if user else ""
+    posts = _store.list_blog_posts(include_drafts=True)
+    rows = "".join([f"<tr><td><a href='/blog/{p['slug']}'>{p['title']}</a></td><td>{p['status']}</td><td>{p['created_at']}</td></tr>" for p in posts]) or "<tr><td colspan='3'>No blog posts yet</td></tr>"
+    body = _template.render("blog_home.html", {"username": username, "posts_rows": rows, "message": ""})
+    return HTMLResponse(body)
+
+
+@app.get("/blog/new", response_class=HTMLResponse)
+def blog_new(request: Request) -> HTMLResponse:
+    user = _current_user(request)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    body = _template.render("blog_new.html", {"message": "", "title": "", "summary": "", "content_markdown": ""})
+    return HTMLResponse(body)
+
+
+@app.post("/blog/new", response_class=HTMLResponse)
+def blog_create(
+    request: Request,
+    title: str = Form(...),
+    summary: str = Form(...),
+    content_markdown: str = Form(...),
+    status_value: str = Form("published"),
+) -> HTMLResponse:
+    user = _current_user(request)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+
+    status_safe = status_value if status_value in {"draft", "published"} else "draft"
+    base_slug = _slugify(title)
+    slug = base_slug
+    index = 2
+    while _store.find_blog_post_by_slug(slug) is not None:
+        slug = f"{base_slug}-{index}"
+        index += 1
+
+    _store.create_blog_post(
+        author_user_id=int(user["id"]),
+        title=title.strip(),
+        slug=slug,
+        summary=summary.strip(),
+        content_markdown=content_markdown.strip(),
+        status=status_safe,
+    )
+    return RedirectResponse(f"/blog/{slug}", status_code=303)
+
+
+@app.get("/blog/{slug}", response_class=HTMLResponse)
+def blog_post(request: Request, slug: str) -> HTMLResponse:
+    user = _current_user(request)
+    username = user["username"] if user else ""
+    post = _store.find_blog_post_by_slug(slug)
+    if post is None:
+        return HTMLResponse("Blog post not found", status_code=404)
+
+    paragraphs = "".join([f"<p>{line}</p>" for line in str(post["content_markdown"]).split("\n") if line.strip()])
+    body = _template.render(
+        "blog_post.html",
+        {
+            "username": username,
+            "title": post["title"],
+            "summary": post["summary"],
+            "status": post["status"],
+            "created_at": post["created_at"],
+            "content_html": paragraphs,
+        },
+    )
+    return HTMLResponse(body)
 
 
 @app.post("/v1/search", response_model=SearchResponse)

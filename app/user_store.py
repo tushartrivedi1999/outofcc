@@ -107,6 +107,19 @@ class UserStore:
                     UNIQUE(dataset_id, row_index),
                     FOREIGN KEY(dataset_id) REFERENCES datasets(id)
                 );
+
+                CREATE TABLE IF NOT EXISTS blog_posts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    author_user_id INTEGER NOT NULL,
+                    title TEXT NOT NULL,
+                    slug TEXT UNIQUE NOT NULL,
+                    summary TEXT NOT NULL,
+                    content_markdown TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(author_user_id) REFERENCES users(id)
+                );
                 """
             )
 
@@ -290,4 +303,38 @@ class UserStore:
                 (dataset_id,),
             ).fetchall()
             return list(rows)
+
+
+
+    def create_blog_post(self, author_user_id: int, title: str, slug: str, summary: str, content_markdown: str, status: str = "published") -> int:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO blog_posts (author_user_id, title, slug, summary, content_markdown, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (author_user_id, title, slug, summary, content_markdown, status, now, now),
+            )
+            return int(cur.lastrowid)
+
+    def list_blog_posts(self, include_drafts: bool = True) -> list[sqlite3.Row]:
+        with self._connect() as conn:
+            if include_drafts:
+                rows = conn.execute(
+                    "SELECT id, title, slug, summary, status, created_at, updated_at FROM blog_posts ORDER BY id DESC"
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT id, title, slug, summary, status, created_at, updated_at FROM blog_posts WHERE status = 'published' ORDER BY id DESC"
+                ).fetchall()
+            return list(rows)
+
+    def find_blog_post_by_slug(self, slug: str) -> sqlite3.Row | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id, title, slug, summary, content_markdown, status, created_at, updated_at FROM blog_posts WHERE slug = ?",
+                (slug,),
+            ).fetchone()
+            return row
 

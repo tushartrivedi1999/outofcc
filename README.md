@@ -1,52 +1,51 @@
-# Open Search Platform (API + Console + Agent Context)
+# Open Search Platform (Searx-first)
 
-A single production-oriented project that combines:
-- **Search API platform** (Google Search API alternative)
-- **Open Search Console** (Google Search Console-style property/verification/analytics)
-- **Agent Context Studio** (Tavily-style context API for AI agents, LLMs, SLMs)
-- **Dataset creation pipeline** (from Open Search or CommonCrawl-style source)
+A unified production-oriented platform with:
+- Search API (Google Search API alternative)
+- Open Search Console (Google Search Console-style module)
+- Agent Context Studio (Tavily-style module for LLM/agent grounding)
+- Dataset creation pipeline (Open Search/CommonCrawl-style sources)
+- Internal Engine Blog (project updates and release notes)
 
-## Why this matters
+> **Core principle:** this project is **Searx-first**. Retrieval originates from Searx, and all product modules build on top of that data backbone.
 
-This stack is designed for grounded AI systems:
-- fresh and structured context retrieval
-- citations and context chunks for trustable outputs
-- property insights and issue diagnostics for website owners
-- API + dashboard + console in one deployable product
+## Documentation
 
-## Platform modules
+Comprehensive docs are in `docs/`:
+- `docs/README.md` - docs index
+- `docs/architecture.md`
+- `docs/apis.md`
+- `docs/search-console.md`
+- `docs/agent-context.md`
+- `docs/security.md`
+- `docs/operations.md`
+- `INTEGRATION_GUIDE.md` - end-to-end integration playbook
 
-- `app/main.py` - all routes for auth, dashboard, search API, console, agent context, dataset creation
-- `app/service.py` - retrieval + rerank + cache pipeline
-- `app/agent_context.py` - Tavily-style context construction
-- `app/console.py` - verification payloads and chart generators
-- `app/user_store.py` - persistence (users, keys, sites, metrics, issues, usage, datasets)
-- `sdk/python/opensearch_sdk.py` - Python SDK for search API
-- `scripts/load_test.py` - stress/load testing with distortion detection
-- `INTEGRATION_GUIDE.md` - step-by-step integration document
+## Product modules
 
-## Features
+### 1) Search API
+- Endpoint: `POST /v1/search`
+- API-key auth + plan-based rate limits
+- cache + reranking + Searx connector
 
-### Search API
-- API key auth with plans (`free`, `pro`, `enterprise`)
-- rate limiting, cache, reranking
-- Searx-backed retrieval
+### 2) Open Search Console
+- Route: `/console`
+- property onboarding and verification
+- analytics and issue diagnostics
 
-### Open Search Console
-- add property by domain/URL prefix
-- verify ownership by DNS or URL-prefix method
-- view performance analytics and issues
+### 3) Agent Context Studio (Tavily alternative)
+- Route: `/agent`
+- Endpoint: `POST /v1/agent/context`
+- structured context output: answer brief, citations, chunks, freshness hint
 
-### Agent Context Studio (Tavily alternative)
-- dashboard button: **Agent Context Studio** (`/agent`)
-- structured context generation for AI agents
-- outputs answer brief + citations + context chunks + freshness hint
-- API endpoint: `POST /v1/agent/context`
-
-### Dataset creation
-- UI and API-driven dataset creation
+### 4) Dataset creation
+- UI in `/agent`
+- API: `POST /v1/agent/datasets/create`
 - sources: `open-search`, `commoncrawl`
-- API endpoint: `POST /v1/agent/datasets/create`
+
+### 5) Internal Engine Blog
+- Routes: `/blog`, `/blog/new`, `/blog/{slug}`
+- publish product updates and architecture notes
 
 ## Quick start
 
@@ -59,7 +58,7 @@ set -a && source .env && set +a
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-Default login: `admin/admin`
+Default admin login: `admin/admin`
 
 ## API examples
 
@@ -68,15 +67,15 @@ Default login: `admin/admin`
 curl -X POST http://localhost:8000/v1/search \
   -H "Authorization: Bearer <YOUR_API_KEY>" \
   -H "Content-Type: application/json" \
-  -d '{"q":"best retrieval augmented generation patterns", "num_results": 5}'
+  -d '{"q":"latest llm retrieval methods", "num_results": 5}'
 ```
 
-### Agent context (Tavily-style)
+### Agent context
 ```bash
 curl -X POST http://localhost:8000/v1/agent/context \
   -H "Authorization: Bearer <YOUR_API_KEY>" \
   -H "Content-Type: application/json" \
-  -d '{"query":"latest llm security benchmarks", "top_k": 8}'
+  -d '{"query":"latest llm eval benchmarks", "top_k": 8}'
 ```
 
 ### Dataset creation
@@ -84,20 +83,26 @@ curl -X POST http://localhost:8000/v1/agent/context \
 curl -X POST http://localhost:8000/v1/agent/datasets/create \
   -H "Authorization: Bearer <YOUR_API_KEY>" \
   -H "Content-Type: application/json" \
-  -d '{"name":"llm-security-corpus", "query":"llm security", "source":"open-search", "rows":100}'
+  -d '{"name":"llm-benchmark-corpus", "query":"llm benchmarks", "source":"open-search", "rows":120}'
 ```
 
-## Stress testing
+## Stress, monkey and load-balance tests
 
 ```bash
 python scripts/load_test.py --base-url http://localhost:8000 --api-key <YOUR_API_KEY> --concurrency 50 --requests 2000
+python scripts/monkey_test.py
+python scripts/load_balance_test.py
 ```
 
-## Integration docs
+## Production readiness note
 
-See **`INTEGRATION_GUIDE.md`** for step-by-step integration into your current product.
+The current project is a strong foundation. For full production readiness:
+- move SQLite to Postgres
+- move in-memory limiter/cache to Redis
+- add real DNS/file probe verification workers
+- add observability, SLOs, RBAC, billing, and abuse controls
 
-## Push to GitHub
+## GitHub push
 
 ```bash
 git remote add origin https://github.com/<your-org-or-user>/<repo>.git

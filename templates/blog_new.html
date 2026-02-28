@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>New Blog Post</title></head>
+<body>
+  <h1>New Blog Post</h1>
+  <p><a href="/blog">Back to blog</a></p>
+  <p>${message}</p>
+  <form method="post" action="/blog/new">
+    <label>Title <input name="title" value="${title}" required></label><br>
+    <label>Summary <input name="summary" value="${summary}" required></label><br>
+    <label>Status
+      <select name="status_value">
+        <option value="published">published</option>
+        <option value="draft">draft</option>
+      </select>
+    </label><br>
+    <label>Content (markdown-like plain text)</label><br>
+    <textarea name="content_markdown" rows="14" cols="100">${content_markdown}</textarea><br>
+    <button type="submit">Publish post</button>
+  </form>
+</body>
+</html>
