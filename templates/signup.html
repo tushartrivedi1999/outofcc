@@ -5,6 +5,7 @@
   <h1>Create account</h1>
   <p>${message}</p>
   <form method="post" action="/signup">
+    <input type="hidden" name="csrf_token" value="${csrf_token}">
     <label>Username <input name="username" required></label><br>
     <label>Password <input type="password" name="password" required></label><br>
     <button type="submit">Sign up</button>

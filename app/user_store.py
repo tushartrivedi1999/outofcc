@@ -70,6 +70,10 @@ class UserStore:
             if self._backend == "sqlite":
                 conn.executescript(
                     """
+                    CREATE TABLE IF NOT EXISTS schema_migrations (
+                        version TEXT PRIMARY KEY,
+                        applied_at TEXT NOT NULL
+                    );
                     CREATE TABLE IF NOT EXISTS users (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         username TEXT UNIQUE NOT NULL,
@@ -171,13 +175,15 @@ class UserStore:
                     CREATE TABLE IF NOT EXISTS payments (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         user_id INTEGER NOT NULL,
-                        order_id TEXT NOT NULL,
+                        order_id TEXT UNIQUE NOT NULL,
                         payment_id TEXT,
                         signature TEXT,
+                        webhook_event_id TEXT,
                         amount_paise INTEGER NOT NULL,
                         currency TEXT NOT NULL,
                         plan TEXT NOT NULL,
                         status TEXT NOT NULL,
+                        processed_at TEXT,
                         created_at TEXT NOT NULL,
                         FOREIGN KEY(user_id) REFERENCES users(id)
                     );
@@ -190,11 +196,19 @@ class UserStore:
                     CREATE INDEX IF NOT EXISTS idx_blog_slug ON blog_posts(slug);
                     CREATE INDEX IF NOT EXISTS idx_subscriptions_user ON subscriptions(user_id);
                     CREATE INDEX IF NOT EXISTS idx_payments_user_created ON payments(user_id, created_at);
+                    CREATE INDEX IF NOT EXISTS idx_payments_order ON payments(order_id);
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_payment_id_unique ON payments(payment_id) WHERE payment_id IS NOT NULL;
                     """
                 )
                 return
 
             statements = [
+                """
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    version TEXT PRIMARY KEY,
+                    applied_at TIMESTAMPTZ NOT NULL
+                )
+                """,
                 """
                 CREATE TABLE IF NOT EXISTS users (
                     id BIGSERIAL PRIMARY KEY,
@@ -308,13 +322,15 @@ class UserStore:
                 CREATE TABLE IF NOT EXISTS payments (
                     id BIGSERIAL PRIMARY KEY,
                     user_id BIGINT NOT NULL REFERENCES users(id),
-                    order_id TEXT NOT NULL,
-                    payment_id TEXT,
+                    order_id TEXT UNIQUE NOT NULL,
+                    payment_id TEXT UNIQUE,
                     signature TEXT,
+                    webhook_event_id TEXT,
                     amount_paise INTEGER NOT NULL,
                     currency TEXT NOT NULL,
                     plan TEXT NOT NULL,
                     status TEXT NOT NULL,
+                    processed_at TIMESTAMPTZ,
                     created_at TIMESTAMPTZ NOT NULL
                 )
                 """,
@@ -327,9 +343,47 @@ class UserStore:
                 "CREATE INDEX IF NOT EXISTS idx_blog_slug ON blog_posts(slug)",
                 "CREATE INDEX IF NOT EXISTS idx_subscriptions_user ON subscriptions(user_id)",
                 "CREATE INDEX IF NOT EXISTS idx_payments_user_created ON payments(user_id, created_at)",
+                "CREATE INDEX IF NOT EXISTS idx_payments_order ON payments(order_id)",
             ]
             for statement in statements:
                 conn.execute(statement)
+            conn.commit()
+
+        self._apply_backfill_migrations()
+        self._record_migration("2026_02_baseline")
+
+    def _record_migration(self, version: str) -> None:
+        now = _utc_now_iso()
+        with self._connect() as conn:
+            if self._backend == "sqlite":
+                conn.execute(
+                    "INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)",
+                    (version, now),
+                )
+                return
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s) ON CONFLICT(version) DO NOTHING",
+                (version, now),
+            )
+            conn.commit()
+
+    def _apply_backfill_migrations(self) -> None:
+        with self._connect() as conn:
+            if self._backend == "sqlite":
+                for statement in [
+                    "ALTER TABLE payments ADD COLUMN webhook_event_id TEXT",
+                    "ALTER TABLE payments ADD COLUMN processed_at TEXT",
+                    "CREATE INDEX IF NOT EXISTS idx_payments_order ON payments(order_id)",
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_payment_id_unique ON payments(payment_id) WHERE payment_id IS NOT NULL",
+                ]:
+                    try:
+                        conn.execute(statement)
+                    except Exception:
+                        pass
+                return
+            conn.execute("ALTER TABLE payments ADD COLUMN IF NOT EXISTS webhook_event_id TEXT")
+            conn.execute("ALTER TABLE payments ADD COLUMN IF NOT EXISTS processed_at TIMESTAMPTZ")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_payments_order ON payments(order_id)")
             conn.commit()
 
     def create_user(self, username: str, password: str) -> int:
@@ -602,23 +656,83 @@ class UserStore:
         now = _utc_now_iso()
         with self._connect() as conn:
             if self._backend == "sqlite":
-                cur = conn.execute(
-                    "INSERT INTO payments (user_id, order_id, amount_paise, currency, plan, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                conn.execute(
+                    """
+                    INSERT INTO payments (user_id, order_id, amount_paise, currency, plan, status, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(order_id) DO NOTHING
+                    """,
                     (user_id, order_id, amount_paise, currency, plan, status, now),
                 )
-                return int(cur.lastrowid)
+                row = conn.execute("SELECT id FROM payments WHERE order_id = ?", (order_id,)).fetchone()
+                return int(row["id"])
             cur = conn.execute(
-                "INSERT INTO payments (user_id, order_id, amount_paise, currency, plan, status, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                """
+                INSERT INTO payments (user_id, order_id, amount_paise, currency, plan, status, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT(order_id) DO UPDATE SET order_id = EXCLUDED.order_id
+                RETURNING id
+                """,
                 (user_id, order_id, amount_paise, currency, plan, status, now),
             )
             new_id = int(cur.fetchone()["id"])
             conn.commit()
             return new_id
 
-    def complete_payment(self, order_id: str, payment_id: str, signature: str) -> None:
-        self._execute(
-            "UPDATE payments SET payment_id = ?, signature = ?, status = 'captured' WHERE order_id = ?",
-            (payment_id, signature, order_id),
+    def complete_payment(
+        self,
+        order_id: str,
+        payment_id: str,
+        signature: str,
+        webhook_event_id: str | None = None,
+    ) -> bool:
+        now = _utc_now_iso()
+        with self._connect() as conn:
+            if self._backend == "sqlite":
+                existing = conn.execute(
+                    "SELECT status, payment_id FROM payments WHERE order_id = ?",
+                    (order_id,),
+                ).fetchone()
+                if existing is None:
+                    return False
+                if existing["status"] == "captured":
+                    return True
+                conn.execute(
+                    """
+                    UPDATE payments
+                    SET payment_id = ?, signature = ?, webhook_event_id = COALESCE(?, webhook_event_id),
+                        status = 'captured', processed_at = ?
+                    WHERE order_id = ?
+                    """,
+                    (payment_id, signature, webhook_event_id, now, order_id),
+                )
+                return True
+            existing = conn.execute(
+                "SELECT status, payment_id FROM payments WHERE order_id = %s",
+                (order_id,),
+            ).fetchone()
+            if existing is None:
+                conn.commit()
+                return False
+            if existing["status"] == "captured":
+                conn.commit()
+                return True
+            conn.execute(
+                """
+                UPDATE payments
+                SET payment_id = %s, signature = %s, webhook_event_id = COALESCE(%s, webhook_event_id),
+                    status = 'captured', processed_at = %s
+                WHERE order_id = %s
+                """,
+                (payment_id, signature, webhook_event_id, now, order_id),
+            )
+            conn.commit()
+            return True
+
+    def get_payment_by_order_id(self, order_id: str):
+        return self._fetchone(
+            "SELECT id, user_id, order_id, payment_id, signature, amount_paise, currency, plan, status, created_at FROM payments WHERE order_id = ?",
+            (order_id,),
         )
 
     def list_payments(self, user_id: int, limit: int = 20) -> list:

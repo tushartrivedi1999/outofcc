@@ -22,6 +22,8 @@ Set env vars:
 
 Then use `/billing` route for order creation and payment verification.
 
+For asynchronous capture confirmation, configure Razorpay webhook -> `POST /webhooks/razorpay` and set `RAZORPAY_WEBHOOK_SECRET`.
+
 ## Stress and load
 
 ```bash
@@ -45,9 +47,9 @@ python scripts/load_balance_test.py
 - [ ] Postgres + Redis migration
 - [ ] HTTPS and secret-management hardening
 - [ ] Monitoring (metrics/logs/traces)
-- [ ] Autoscaling and health checks
+- [x] Autoscaling-friendly health endpoints (`/live`, `/ready`)
 - [ ] Background workers for telemetry and verification probes
-- [ ] Razorpay webhook pipeline for async payment state updates
+- [x] Razorpay webhook pipeline for async payment state updates + idempotent payment capture handling
 
 ## Performance tuning notes
 

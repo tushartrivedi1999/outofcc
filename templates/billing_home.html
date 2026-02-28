@@ -11,6 +11,7 @@
 
   <h2>Upgrade plans (Razorpay)</h2>
   <form method="post" action="/billing/create-order">
+    <input type="hidden" name="csrf_token" value="${csrf_token}">
     <label>Plan
       <select name="plan">
         <option value="pro">pro - ₹${pro_price}/month</option>
@@ -23,6 +24,7 @@
   <h3>Verify payment</h3>
   <p>Use Razorpay callback values here if you are testing manually.</p>
   <form method="post" action="/billing/verify">
+    <input type="hidden" name="csrf_token" value="${csrf_token}">
     <label>Plan
       <select name="plan">
         <option value="pro">pro</option>

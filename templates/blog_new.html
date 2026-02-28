@@ -6,6 +6,7 @@
   <p><a href="/blog">Back to blog</a></p>
   <p>${message}</p>
   <form method="post" action="/blog/new">
+    <input type="hidden" name="csrf_token" value="${csrf_token}">
     <label>Title <input name="title" value="${title}" required></label><br>
     <label>Summary <input name="summary" value="${summary}" required></label><br>
     <label>Status

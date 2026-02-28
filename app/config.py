@@ -22,6 +22,8 @@ class Settings:
     payment_currency: str = os.getenv("PAYMENT_CURRENCY", "INR")
     pro_monthly_price_inr: int = int(os.getenv("PRO_MONTHLY_PRICE_INR", "999"))
     enterprise_monthly_price_inr: int = int(os.getenv("ENTERPRISE_MONTHLY_PRICE_INR", "4999"))
+    cookie_secure: bool = os.getenv("COOKIE_SECURE", "false").lower() in {"1", "true", "yes"}
+    webhook_secret: str = os.getenv("RAZORPAY_WEBHOOK_SECRET", "")
 
 
 SETTINGS = Settings()

@@ -120,8 +120,19 @@ class CoreTests(unittest.TestCase):
             self.assertIn("<svg", svg)
 
     def test_razorpay_signature_verifier(self):
-        gateway = RazorpayGateway("key", "secret")
+        gateway = RazorpayGateway("key", "secret", "whsec")
         self.assertFalse(gateway.verify_signature("o", "p", "x"))
+        self.assertFalse(gateway.verify_webhook_signature(b"{}", "bad"))
+
+    def test_payment_completion_idempotent(self):
+        with tempfile.TemporaryDirectory() as d:
+            db = str(Path(d) / "app.db")
+            store = UserStore(db)
+            user_id = store.create_user("u2", "admin")
+            store.create_payment_record(user_id, "order_2", 100, "INR", "pro")
+            self.assertTrue(store.complete_payment("order_2", "pay_2", "sig_2"))
+            self.assertTrue(store.complete_payment("order_2", "pay_2", "sig_2"))
+            self.assertFalse(store.complete_payment("order_missing", "pay_x", "sig_x"))
 
     def test_generate_api_key_prefix(self):
         self.assertTrue(generate_api_key().startswith("osk_"))

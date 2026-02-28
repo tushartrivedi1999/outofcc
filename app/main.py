@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
+import json
+import logging
 import re
+import secrets
+import uuid
 
 from fastapi import Depends, FastAPI, Form, Header, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -36,7 +41,8 @@ _service = SearchService(
 )
 _console = SearchConsoleService()
 _agent_context = AgentContextService(_service)
-_payments = RazorpayGateway(SETTINGS.razorpay_key_id, SETTINGS.razorpay_key_secret)
+_payments = RazorpayGateway(SETTINGS.razorpay_key_id, SETTINGS.razorpay_key_secret, SETTINGS.webhook_secret)
+_logger = logging.getLogger("opensearch.app")
 
 
 
@@ -76,7 +82,23 @@ def _current_user(request: Request):
     return _store.find_user_by_id(user_id)
 
 
-def _render_dashboard(user_id: int, username: str, message: str = "", latest_key: str = "") -> HTMLResponse:
+def _csrf_from_session(session_cookie: str | None) -> str:
+    if not session_cookie:
+        return ""
+    return hmac.new(SETTINGS.session_secret.encode("utf-8"), session_cookie.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _csrf_for_request(request: Request) -> str:
+    return _csrf_from_session(request.cookies.get("session"))
+
+
+def _require_csrf(request: Request, csrf_token: str) -> None:
+    expected = _csrf_for_request(request)
+    if not expected or not csrf_token or not hmac.compare_digest(expected, csrf_token):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF validation failed")
+
+
+def _render_dashboard(request: Request, user_id: int, username: str, message: str = "", latest_key: str = "") -> HTMLResponse:
     keys = _store.list_api_keys(user_id)
     keys_html = "".join([f"<li>{k['prefix']}... ({k['plan']}) - {k['created_at']}</li>" for k in keys]) or "<li>No API keys yet</li>"
     usage = _store.list_recent_api_usage(user_id, limit=14)
@@ -87,6 +109,7 @@ def _render_dashboard(user_id: int, username: str, message: str = "", latest_key
         "dashboard.html",
         {
             "username": username,
+            "csrf_token": _csrf_for_request(request),
             "keys_html": keys_html,
             "message": message,
             "latest_key": latest_key,
@@ -97,7 +120,7 @@ def _render_dashboard(user_id: int, username: str, message: str = "", latest_key
     return HTMLResponse(body)
 
 
-def _render_agent_home(user_id: int, username: str, message: str = "", context_json: str = "") -> HTMLResponse:
+def _render_agent_home(request: Request, user_id: int, username: str, message: str = "", context_json: str = "") -> HTMLResponse:
     datasets = _store.list_datasets(user_id)
     dataset_rows = "".join(
         [
@@ -109,6 +132,7 @@ def _render_agent_home(user_id: int, username: str, message: str = "", context_j
         "agent_home.html",
         {
             "username": username,
+            "csrf_token": _csrf_for_request(request),
             "message": message,
             "context_json": context_json,
             "datasets_rows": dataset_rows,
@@ -123,7 +147,7 @@ def _render_agent_home(user_id: int, username: str, message: str = "", context_j
 
 
 
-def _render_billing_home(user_id: int, message: str = "") -> HTMLResponse:
+def _render_billing_home(request: Request, user_id: int, message: str = "") -> HTMLResponse:
     sub = _store.get_subscription(user_id)
     current_plan = sub["plan"] if sub else "free"
     payments = _store.list_payments(user_id, limit=20)
@@ -136,6 +160,7 @@ def _render_billing_home(user_id: int, message: str = "") -> HTMLResponse:
     body = _template.render(
         "billing_home.html",
         {
+            "csrf_token": _csrf_for_request(request),
             "current_plan": current_plan,
             "free_daily_calls": SETTINGS.free_daily_calls,
             "today_calls": _store.search_calls_today(user_id),
@@ -148,14 +173,14 @@ def _render_billing_home(user_id: int, message: str = "") -> HTMLResponse:
     )
     return HTMLResponse(body)
 
-def _render_console_home(user_id: int, username: str, message: str = "") -> HTMLResponse:
+def _render_console_home(request: Request, user_id: int, username: str, message: str = "") -> HTMLResponse:
     sites = _store.list_sites(user_id)
     rows = [
         f"<tr><td><a href='/console/site/{site['id']}'>{site['domain']}</a></td><td>{'verified' if int(site['verified']) == 1 else 'pending'}</td><td>{site['verification_method'] or '-'}</td><td>{site['created_at']}</td></tr>"
         for site in sites
     ]
     table_rows = "".join(rows) or "<tr><td colspan='4'>No properties yet</td></tr>"
-    body = _template.render("console_home.html", {"username": username, "sites_rows": table_rows, "message": message})
+    body = _template.render("console_home.html", {"username": username, "csrf_token": _csrf_for_request(request), "sites_rows": table_rows, "message": message})
     return HTMLResponse(body)
 
 
@@ -195,9 +220,38 @@ def require_principal(authorization: str | None = Header(default=None)) -> ApiPr
     return principal
 
 
+@app.middleware("http")
+async def request_logging_middleware(request: Request, call_next):
+    request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+    response = await call_next(request)
+    response.headers["x-request-id"] = request_id
+    _logger.info(
+        json.dumps(
+            {
+                "request_id": request_id,
+                "method": request.method,
+                "path": request.url.path,
+                "status_code": response.status_code,
+            }
+        )
+    )
+    return response
+
+
+@app.get("/live")
+def liveness() -> dict[str, str]:
+    return {"status": "alive"}
+
+
+@app.get("/ready")
+def readiness() -> dict[str, str]:
+    _store._fetchone("SELECT 1")
+    return {"status": "ready"}
+
+
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health() -> RedirectResponse:
+    return RedirectResponse("/ready", status_code=307)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -209,31 +263,35 @@ def home(request: Request) -> HTMLResponse:
 
 
 @app.get("/signup", response_class=HTMLResponse)
-def signup_page() -> HTMLResponse:
-    return HTMLResponse(_template.render("signup.html", {"message": ""}))
+def signup_page(request: Request) -> HTMLResponse:
+    return HTMLResponse(_template.render("signup.html", {"message": "", "csrf_token": _csrf_for_request(request)}))
 
 
 @app.post("/signup", response_class=HTMLResponse)
-def signup(username: str = Form(...), password: str = Form(...)) -> HTMLResponse:
+def signup(username: str = Form(...), password: str = Form(...), csrf_token: str = Form("")) -> HTMLResponse:
+    # signup is allowed for logged-out users, skip strict csrf when no session
+
     try:
         _store.create_user(username.strip(), password)
     except Exception:
-        return HTMLResponse(_template.render("signup.html", {"message": "Username already exists."}), status_code=400)
-    return HTMLResponse(_template.render("login.html", {"message": "Signup successful. Please login."}))
+        return HTMLResponse(_template.render("signup.html", {"message": "Username already exists.", "csrf_token": ""}), status_code=400)
+    return HTMLResponse(_template.render("login.html", {"message": "Signup successful. Please login.", "csrf_token": ""}))
 
 
 @app.get("/login", response_class=HTMLResponse)
-def login_page() -> HTMLResponse:
-    return HTMLResponse(_template.render("login.html", {"message": "Use admin/admin for default access."}))
+def login_page(request: Request) -> HTMLResponse:
+    return HTMLResponse(_template.render("login.html", {"message": "Use admin/admin for default access.", "csrf_token": _csrf_for_request(request)}))
 
 
 @app.post("/login")
-def login(username: str = Form(...), password: str = Form(...)) -> RedirectResponse | HTMLResponse:
+def login(username: str = Form(...), password: str = Form(...), csrf_token: str = Form("")) -> RedirectResponse | HTMLResponse:
     user = _store.get_user_by_username(username.strip())
     if user is None or not verify_password(password, user["password_hash"]):
-        return HTMLResponse(_template.render("login.html", {"message": "Invalid credentials."}), status_code=401)
+        return HTMLResponse(_template.render("login.html", {"message": "Invalid credentials.", "csrf_token": ""}), status_code=401)
     response = RedirectResponse("/dashboard", status_code=303)
-    response.set_cookie("session", _session.create(int(user["id"])), httponly=True, samesite="lax")
+    session_token = _session.create(int(user["id"]))
+    response.set_cookie("session", session_token, httponly=True, samesite="lax", secure=SETTINGS.cookie_secure)
+    response.set_cookie("csrf", _csrf_from_session(session_token), httponly=False, samesite="lax", secure=SETTINGS.cookie_secure)
     return response
 
 
@@ -241,6 +299,7 @@ def login(username: str = Form(...), password: str = Form(...)) -> RedirectRespo
 def logout() -> RedirectResponse:
     response = RedirectResponse("/", status_code=303)
     response.delete_cookie("session")
+    response.delete_cookie("csrf")
     return response
 
 
@@ -249,18 +308,20 @@ def dashboard(request: Request) -> HTMLResponse:
     user = _current_user(request)
     if user is None:
         return RedirectResponse("/login", status_code=303)
-    return _render_dashboard(int(user["id"]), str(user["username"]))
+    return _render_dashboard(request, int(user["id"]), str(user["username"]))
 
 
 @app.post("/dashboard/generate", response_class=HTMLResponse)
-def generate_dashboard_key(request: Request, plan: str = Form("free")) -> HTMLResponse:
+def generate_dashboard_key(request: Request, plan: str = Form("free"), csrf_token: str = Form(...)) -> HTMLResponse:
     user = _current_user(request)
     if user is None:
         return RedirectResponse("/login", status_code=303)
+    _require_csrf(request, csrf_token)
 
     selected_plan = Plan(plan)
     if not _allowed_for_plan(int(user["id"]), selected_plan):
         return _render_dashboard(
+            request,
             int(user["id"]),
             str(user["username"]),
             message="Plan requires an active paid subscription. Open Billing to upgrade.",
@@ -272,6 +333,7 @@ def generate_dashboard_key(request: Request, plan: str = Form("free")) -> HTMLRe
     _store.create_api_key(user_id=int(user["id"]), key_hash=digest, prefix=raw_key[:12], plan=selected_plan.value)
 
     return _render_dashboard(
+        request,
         int(user["id"]),
         str(user["username"]),
         message="Store this key now. It will not be shown fully again:",
@@ -284,14 +346,15 @@ def console_home(request: Request) -> HTMLResponse:
     user = _current_user(request)
     if user is None:
         return RedirectResponse("/login", status_code=303)
-    return _render_console_home(int(user["id"]), str(user["username"]))
+    return _render_console_home(request, int(user["id"]), str(user["username"]))
 
 
 @app.post("/console/add", response_class=HTMLResponse)
-def console_add_site(request: Request, domain: str = Form(...)) -> HTMLResponse:
+def console_add_site(request: Request, domain: str = Form(...), csrf_token: str = Form(...)) -> HTMLResponse:
     user = _current_user(request)
     if user is None:
         return RedirectResponse("/login", status_code=303)
+    _require_csrf(request, csrf_token)
 
     clean_domain = domain.strip().lower().replace("https://", "").replace("http://", "").rstrip("/")
     token = _console.create_token()
@@ -300,7 +363,7 @@ def console_add_site(request: Request, domain: str = Form(...)) -> HTMLResponse:
         _store.create_site(int(user["id"]), clean_domain, token)
     except Exception:
         message = "This property already exists in your account."
-    return _render_console_home(int(user["id"]), str(user["username"]), message=message)
+    return _render_console_home(request, int(user["id"]), str(user["username"]), message=message)
 
 
 @app.get("/console/site/{site_id}", response_class=HTMLResponse)
@@ -324,6 +387,7 @@ def console_site_detail(request: Request, site_id: int) -> HTMLResponse:
                 "html_file": payload.html_file,
                 "html_token": payload.html_token,
                 "message": "",
+                "csrf_token": _csrf_for_request(request),
             },
         )
         return HTMLResponse(body)
@@ -372,10 +436,12 @@ def console_verify_site(
     site_id: int,
     method: str = Form(...),
     token_input: str = Form(...),
+    csrf_token: str = Form(...),
 ) -> HTMLResponse:
     user = _current_user(request)
     if user is None:
         return RedirectResponse("/login", status_code=303)
+    _require_csrf(request, csrf_token)
 
     site = _store.find_site(site_id, int(user["id"]))
     if site is None:
@@ -392,6 +458,7 @@ def console_verify_site(
                 "html_file": payload.html_file,
                 "html_token": payload.html_token,
                 "message": "Verification token mismatch. Please retry.",
+                "csrf_token": _csrf_for_request(request),
             },
         )
         return HTMLResponse(body, status_code=400)
@@ -408,17 +475,19 @@ def agent_home(request: Request) -> HTMLResponse:
     user = _current_user(request)
     if user is None:
         return RedirectResponse("/login", status_code=303)
-    return _render_agent_home(int(user["id"]), str(user["username"]))
+    return _render_agent_home(request, int(user["id"]), str(user["username"]))
 
 
 @app.post("/agent/search", response_class=HTMLResponse)
-async def agent_search(request: Request, query: str = Form(...), top_k: int = Form(8)) -> HTMLResponse:
+async def agent_search(request: Request, query: str = Form(...), top_k: int = Form(8), csrf_token: str = Form(...)) -> HTMLResponse:
     user = _current_user(request)
     if user is None:
         return RedirectResponse("/login", status_code=303)
+    _require_csrf(request, csrf_token)
 
     context = await _agent_context.build_context(AgentContextRequest(query=query, top_k=max(1, min(top_k, 20))))
     return _render_agent_home(
+        request,
         int(user["id"]),
         str(user["username"]),
         message="Context generated for agent grounding.",
@@ -433,10 +502,12 @@ def create_dataset(
     query: str = Form(...),
     source: str = Form("open-search"),
     rows: int = Form(100),
+    csrf_token: str = Form(...),
 ) -> HTMLResponse:
     user = _current_user(request)
     if user is None:
         return RedirectResponse("/login", status_code=303)
+    _require_csrf(request, csrf_token)
 
     safe_rows = max(10, min(rows, 5000))
     try:
@@ -446,7 +517,7 @@ def create_dataset(
     except Exception:
         message = "Dataset name already exists. Use a different dataset name."
 
-    return _render_agent_home(int(user["id"]), str(user["username"]), message=message)
+    return _render_agent_home(request, int(user["id"]), str(user["username"]), message=message)
 
 
 @app.get("/billing", response_class=HTMLResponse)
@@ -454,14 +525,15 @@ def billing_home(request: Request) -> HTMLResponse:
     user = _current_user(request)
     if user is None:
         return RedirectResponse("/login", status_code=303)
-    return _render_billing_home(int(user["id"]))
+    return _render_billing_home(request, int(user["id"]))
 
 
 @app.post("/billing/create-order", response_class=HTMLResponse)
-def billing_create_order(request: Request, plan: str = Form(...)) -> HTMLResponse:
+def billing_create_order(request: Request, plan: str = Form(...), csrf_token: str = Form(...)) -> HTMLResponse:
     user = _current_user(request)
     if user is None:
         return RedirectResponse("/login", status_code=303)
+    _require_csrf(request, csrf_token)
 
     selected = Plan(plan)
     if selected == Plan.FREE:
@@ -488,7 +560,7 @@ def billing_create_order(request: Request, plan: str = Form(...)) -> HTMLRespons
         status="created",
     )
 
-    return _render_billing_home(int(user["id"]), message=f"Order created: {order_id}. {message}")
+    return _render_billing_home(request, int(user["id"]), message=f"Order created: {order_id}. {message}")
 
 
 @app.post("/billing/verify", response_class=HTMLResponse)
@@ -498,19 +570,54 @@ def billing_verify_payment(
     order_id: str = Form(...),
     payment_id: str = Form(...),
     signature: str = Form(...),
+    csrf_token: str = Form(...),
 ) -> HTMLResponse:
     user = _current_user(request)
     if user is None:
         return RedirectResponse("/login", status_code=303)
+    _require_csrf(request, csrf_token)
 
     selected = Plan(plan)
     valid = _payments.verify_signature(order_id=order_id, payment_id=payment_id, signature=signature)
     if not valid and not order_id.startswith("local-order-"):
         return HTMLResponse("Payment signature verification failed", status_code=400)
 
-    _store.complete_payment(order_id=order_id, payment_id=payment_id, signature=signature)
+    completed = _store.complete_payment(order_id=order_id, payment_id=payment_id, signature=signature)
+    if not completed:
+        return HTMLResponse("Unknown order_id", status_code=404)
     _store.upsert_subscription(user_id=int(user["id"]), plan=selected.value, status="active")
     return RedirectResponse("/billing", status_code=303)
+
+
+@app.post("/webhooks/razorpay")
+async def razorpay_webhook(request: Request, x_razorpay_signature: str | None = Header(default=None)) -> JSONResponse:
+    payload = await request.body()
+    if not _payments.verify_webhook_signature(payload, x_razorpay_signature or ""):
+        return JSONResponse({"detail": "Invalid webhook signature"}, status_code=401)
+
+    try:
+        body = json.loads(payload.decode("utf-8"))
+    except Exception:
+        return JSONResponse({"detail": "Invalid payload"}, status_code=400)
+
+    event = str(body.get("event", ""))
+    if event != "payment.captured":
+        return JSONResponse({"status": "ignored", "event": event})
+
+    entity = body.get("payload", {}).get("payment", {}).get("entity", {})
+    order_id = str(entity.get("order_id", ""))
+    payment_id = str(entity.get("id", ""))
+    signature = x_razorpay_signature or ""
+    if not order_id or not payment_id:
+        return JSONResponse({"detail": "Missing order_id/payment_id"}, status_code=400)
+
+    row = _store.get_payment_by_order_id(order_id)
+    if row is None:
+        return JSONResponse({"detail": "Unknown order"}, status_code=404)
+
+    _store.complete_payment(order_id=order_id, payment_id=payment_id, signature=signature, webhook_event_id=str(body.get("id", "")))
+    _store.upsert_subscription(user_id=int(row["user_id"]), plan=str(row["plan"]), status="active")
+    return JSONResponse({"status": "ok", "order_id": order_id})
 
 
 @app.get("/blog", response_class=HTMLResponse)
@@ -528,7 +635,7 @@ def blog_new(request: Request) -> HTMLResponse:
     user = _current_user(request)
     if user is None:
         return RedirectResponse("/login", status_code=303)
-    body = _template.render("blog_new.html", {"message": "", "title": "", "summary": "", "content_markdown": ""})
+    body = _template.render("blog_new.html", {"message": "", "csrf_token": _csrf_for_request(request), "title": "", "summary": "", "content_markdown": ""})
     return HTMLResponse(body)
 
 
@@ -539,10 +646,12 @@ def blog_create(
     summary: str = Form(...),
     content_markdown: str = Form(...),
     status_value: str = Form("published"),
+    csrf_token: str = Form(...),
 ) -> HTMLResponse:
     user = _current_user(request)
     if user is None:
         return RedirectResponse("/login", status_code=303)
+    _require_csrf(request, csrf_token)
 
     status_safe = status_value if status_value in {"draft", "published"} else "draft"
     base_slug = _slugify(title)

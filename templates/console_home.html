@@ -6,6 +6,7 @@
   <p><a href="/dashboard">Back to dashboard</a></p>
   <h2>Add website property</h2>
   <form method="post" action="/console/add">
+    <input type="hidden" name="csrf_token" value="${csrf_token}">
     <label>Domain or URL prefix <input name="domain" placeholder="example.com" required></label>
     <button type="submit">Add property</button>
   </form>
