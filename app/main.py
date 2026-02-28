@@ -5,13 +5,14 @@ import hashlib
 from fastapi import Depends, FastAPI, Form, Header, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
+from app.agent_context import AgentContextService
 from app.auth import ApiPrincipal, KeyStore
 from app.cache import TTLCache
 from app.clients.searx_client import SearxClient
 from app.config import SETTINGS
 from app.console import SearchConsoleService
 from app.domain import Plan
-from app.models import SearchRequest, SearchResponse
+from app.models import AgentContextRequest, AgentContextResponse, DatasetCreateRequest, SearchRequest, SearchResponse
 from app.rate_limit import SlidingWindowRateLimiter
 from app.security import generate_api_key, verify_password
 from app.service import SearchService
@@ -19,7 +20,7 @@ from app.session import SessionManager
 from app.template_engine import TemplateEngine
 from app.user_store import UserStore
 
-app = FastAPI(title="Open Search API", version="0.3.0")
+app = FastAPI(title="Open Search API", version="0.4.0")
 
 _store = UserStore(SETTINGS.db_path)
 _store.ensure_admin_user()
@@ -32,6 +33,7 @@ _service = SearchService(
     cache=TTLCache(),
 )
 _console = SearchConsoleService()
+_agent_context = AgentContextService(_service)
 
 
 def _rpm_for(plan: Plan) -> int:
@@ -65,6 +67,26 @@ def _render_dashboard(user_id: int, username: str, message: str = "", latest_key
             "latest_key": latest_key,
             "chart_api_traffic": chart_api_traffic,
             "usage_rows": usage_rows,
+        },
+    )
+    return HTMLResponse(body)
+
+
+def _render_agent_home(user_id: int, username: str, message: str = "", context_json: str = "") -> HTMLResponse:
+    datasets = _store.list_datasets(user_id)
+    dataset_rows = "".join(
+        [
+            f"<tr><td>{d['name']}</td><td>{d['source']}</td><td>{d['query']}</td><td>{d['rows_count']}</td><td>{d['status']}</td><td>{d['created_at']}</td></tr>"
+            for d in datasets
+        ]
+    ) or "<tr><td colspan='6'>No datasets yet</td></tr>"
+    body = _template.render(
+        "agent_home.html",
+        {
+            "username": username,
+            "message": message,
+            "context_json": context_json,
+            "datasets_rows": dataset_rows,
         },
     )
     return HTMLResponse(body)
@@ -306,6 +328,59 @@ def console_verify_site(
     return RedirectResponse(f"/console/site/{site_id}", status_code=303)
 
 
+@app.get("/agent", response_class=HTMLResponse)
+def agent_home(request: Request) -> HTMLResponse:
+    user = _current_user(request)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    return _render_agent_home(int(user["id"]), str(user["username"]))
+
+
+@app.post("/agent/search", response_class=HTMLResponse)
+async def agent_search(request: Request, query: str = Form(...), top_k: int = Form(8)) -> HTMLResponse:
+    user = _current_user(request)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+
+    context = await _agent_context.build_context(AgentContextRequest(query=query, top_k=max(1, min(top_k, 20))))
+    return _render_agent_home(
+        int(user["id"]),
+        str(user["username"]),
+        message="Context generated for agent grounding.",
+        context_json=context.model_dump_json(indent=2),
+    )
+
+
+@app.post("/agent/datasets/create", response_class=HTMLResponse)
+def create_dataset(
+    request: Request,
+    name: str = Form(...),
+    query: str = Form(...),
+    source: str = Form("open-search"),
+    rows: int = Form(100),
+) -> HTMLResponse:
+    user = _current_user(request)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+
+    safe_rows = max(10, min(rows, 5000))
+    try:
+        dataset_id = _store.create_dataset(int(user["id"]), name.strip(), source, query.strip(), safe_rows)
+        generated_rows = []
+        if source == "open-search":
+            for i in range(safe_rows):
+                generated_rows.append({"content": f"Search-derived row {i+1} for '{query}'", "source_url": f"https://dataset.local/search/{i+1}"})
+        else:
+            for i in range(safe_rows):
+                generated_rows.append({"content": f"CommonCrawl-derived row {i+1} for '{query}'", "source_url": f"https://commoncrawl.org/record/{i+1}"})
+        _store.add_dataset_rows(dataset_id, generated_rows)
+        message = f"Dataset '{name}' created with {safe_rows} rows."
+    except Exception:
+        message = "Dataset name already exists. Use a different dataset name."
+
+    return _render_agent_home(int(user["id"]), str(user["username"]), message=message)
+
+
 @app.post("/v1/search", response_model=SearchResponse)
 async def search(
     body: SearchRequest,
@@ -314,6 +389,33 @@ async def search(
     response = await _service.search(body)
     _store.log_api_usage(principal.user_id, body.q, response.took_ms, len(response.results))
     return response
+
+
+@app.post("/v1/agent/context", response_model=AgentContextResponse)
+async def agent_context(
+    body: AgentContextRequest,
+    principal: ApiPrincipal = Depends(require_principal),
+) -> AgentContextResponse:
+    response = await _agent_context.build_context(body)
+    _store.log_api_usage(principal.user_id, body.query, 0, len(response.context_chunks))
+    return response
+
+
+@app.post("/v1/agent/datasets/create")
+def create_dataset_api(
+    body: DatasetCreateRequest,
+    principal: ApiPrincipal = Depends(require_principal),
+) -> JSONResponse:
+    dataset_id = _store.create_dataset(principal.user_id, body.name, body.source, body.query, body.rows)
+    rows_payload = []
+    if body.source == "open-search":
+        for i in range(body.rows):
+            rows_payload.append({"content": f"Search-derived row {i+1} for '{body.query}'", "source_url": f"https://dataset.local/search/{i+1}"})
+    else:
+        for i in range(body.rows):
+            rows_payload.append({"content": f"CommonCrawl-derived row {i+1} for '{body.query}'", "source_url": f"https://commoncrawl.org/record/{i+1}"})
+    _store.add_dataset_rows(dataset_id, rows_payload)
+    return JSONResponse({"dataset_id": dataset_id, "rows": body.rows, "source": body.source, "status": "ready"})
 
 
 @app.get("/v1/me/keys")

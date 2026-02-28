@@ -84,6 +84,29 @@ class UserStore:
                     result_count INTEGER NOT NULL,
                     FOREIGN KEY(user_id) REFERENCES users(id)
                 );
+
+                CREATE TABLE IF NOT EXISTS datasets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    query TEXT NOT NULL,
+                    rows_count INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(user_id, name),
+                    FOREIGN KEY(user_id) REFERENCES users(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS dataset_rows (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    dataset_id INTEGER NOT NULL,
+                    row_index INTEGER NOT NULL,
+                    content TEXT NOT NULL,
+                    source_url TEXT,
+                    UNIQUE(dataset_id, row_index),
+                    FOREIGN KEY(dataset_id) REFERENCES datasets(id)
+                );
                 """
             )
 
@@ -227,3 +250,44 @@ class UserStore:
                 (user_id, limit),
             ).fetchall()
             return list(rows)
+
+
+    def create_dataset(self, user_id: int, name: str, source: str, query: str, rows_count: int) -> int:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO datasets (user_id, name, source, query, rows_count, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (user_id, name, source, query, rows_count, "ready", now),
+            )
+            return int(cur.lastrowid)
+
+    def add_dataset_rows(self, dataset_id: int, rows: list[dict[str, str]]) -> None:
+        with self._connect() as conn:
+            for index, row in enumerate(rows):
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO dataset_rows (dataset_id, row_index, content, source_url)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (dataset_id, index, row.get("content", ""), row.get("source_url", "")),
+                )
+
+    def list_datasets(self, user_id: int) -> list[sqlite3.Row]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, name, source, query, rows_count, status, created_at FROM datasets WHERE user_id = ? ORDER BY id DESC",
+                (user_id,),
+            ).fetchall()
+            return list(rows)
+
+    def dataset_rows(self, dataset_id: int) -> list[sqlite3.Row]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT row_index, content, source_url FROM dataset_rows WHERE dataset_id = ? ORDER BY row_index",
+                (dataset_id,),
+            ).fetchall()
+            return list(rows)
+

@@ -1,42 +1,54 @@
-# Open Search API + Open Search Console
+# Open Search Platform (API + Console + Agent Context)
 
-Production-oriented Python platform combining:
-1. **Search API layer** (Google Search API alternative)
-2. **Open Search Console layer** (Google Search Console-style website onboarding, verification, performance analytics, and issue tracking)
+A single production-oriented project that combines:
+- **Search API platform** (Google Search API alternative)
+- **Open Search Console** (Google Search Console-style property/verification/analytics)
+- **Agent Context Studio** (Tavily-style context API for AI agents, LLMs, SLMs)
+- **Dataset creation pipeline** (from Open Search or CommonCrawl-style source)
 
-## Core modules
+## Why this matters
 
-- `app/main.py`: FastAPI routes for auth, dashboard, API key management, search API, and Search Console
-- `app/clients/searx_client.py`: Searx backend connector
-- `app/service.py`: retrieval + reranking + cache orchestration
-- `app/user_store.py`: SQLite persistence for users, API keys, properties, metrics, issues
-- `app/console.py`: Search Console verification payloads + analytics chart generation
-- `templates/`: UI for dashboard, console property list, verification, and analytics views
-- `sdk/python/opensearch_sdk.py`: Python SDK for `/v1/search`
-- `scripts/load_test.py`: stress/load test with distortion detection
+This stack is designed for grounded AI systems:
+- fresh and structured context retrieval
+- citations and context chunks for trustable outputs
+- property insights and issue diagnostics for website owners
+- API + dashboard + console in one deployable product
+
+## Platform modules
+
+- `app/main.py` - all routes for auth, dashboard, search API, console, agent context, dataset creation
+- `app/service.py` - retrieval + rerank + cache pipeline
+- `app/agent_context.py` - Tavily-style context construction
+- `app/console.py` - verification payloads and chart generators
+- `app/user_store.py` - persistence (users, keys, sites, metrics, issues, usage, datasets)
+- `sdk/python/opensearch_sdk.py` - Python SDK for search API
+- `scripts/load_test.py` - stress/load testing with distortion detection
+- `INTEGRATION_GUIDE.md` - step-by-step integration document
 
 ## Features
 
-### Search API platform
-- API key issuance (`free`, `pro`, `enterprise`)
-- Plan-aware rate limiting
-- In-memory TTL caching
-- Result reranking (relevance + freshness)
-- Searx retrieval integration
+### Search API
+- API key auth with plans (`free`, `pro`, `enterprise`)
+- rate limiting, cache, reranking
+- Searx-backed retrieval
 
-### Open Search Console (Google Search Console-style)
-- Add website property (domain / URL prefix)
-- Ownership verification workflow:
-  - DNS TXT method
-  - URL-prefix file method
-- Property status (pending/verified)
-- Performance analytics:
-  - Impressions graph
-  - Clicks graph
-  - CTR / average position table
-- Quality and indexing issues board
+### Open Search Console
+- add property by domain/URL prefix
+- verify ownership by DNS or URL-prefix method
+- view performance analytics and issues
 
-## Run locally
+### Agent Context Studio (Tavily alternative)
+- dashboard button: **Agent Context Studio** (`/agent`)
+- structured context generation for AI agents
+- outputs answer brief + citations + context chunks + freshness hint
+- API endpoint: `POST /v1/agent/context`
+
+### Dataset creation
+- UI and API-driven dataset creation
+- sources: `open-search`, `commoncrawl`
+- API endpoint: `POST /v1/agent/datasets/create`
+
+## Quick start
 
 ```bash
 python -m venv .venv
@@ -47,83 +59,47 @@ set -a && source .env && set +a
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-Open:
-- `http://localhost:8000/login`
-- default bootstrap account: `admin` / `admin`
-- dashboard: `http://localhost:8000/dashboard`
-- Search Console: `http://localhost:8000/console`
+Default login: `admin/admin`
 
-## API usage
+## API examples
 
-Generate an API key in dashboard, then call:
-
+### Search
 ```bash
 curl -X POST http://localhost:8000/v1/search \
   -H "Authorization: Bearer <YOUR_API_KEY>" \
   -H "Content-Type: application/json" \
-  -d '{"q":"best python web framework", "num_results": 5, "language":"en"}'
+  -d '{"q":"best retrieval augmented generation patterns", "num_results": 5}'
 ```
 
-## Python SDK integration
-
-```python
-from sdk.python.opensearch_sdk import OpenSearchSDK
-
-client = OpenSearchSDK(base_url="http://localhost:8000", api_key="<YOUR_API_KEY>")
-print(client.search("open source search engine", num_results=5))
+### Agent context (Tavily-style)
+```bash
+curl -X POST http://localhost:8000/v1/agent/context \
+  -H "Authorization: Bearer <YOUR_API_KEY>" \
+  -H "Content-Type: application/json" \
+  -d '{"query":"latest llm security benchmarks", "top_k": 8}'
 ```
 
-## Search Console integration flow for users
+### Dataset creation
+```bash
+curl -X POST http://localhost:8000/v1/agent/datasets/create \
+  -H "Authorization: Bearer <YOUR_API_KEY>" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"llm-security-corpus", "query":"llm security", "source":"open-search", "rows":100}'
+```
 
-1. Sign in and open `/console`.
-2. Add property (domain or URL prefix).
-3. Open property detail and choose verification method.
-4. Apply DNS TXT or upload verification file.
-5. Submit verification token in UI to mark property verified.
-6. After verification, inspect performance charts and issues table.
-
-## Stress / load testing
+## Stress testing
 
 ```bash
 python scripts/load_test.py --base-url http://localhost:8000 --api-key <YOUR_API_KEY> --concurrency 50 --requests 2000
 ```
 
-The tool reports:
-- success/failure count
-- distorted payload count
-- status code distribution
-- throughput + p50/p95/p99 latency
+## Integration docs
 
-Exit code is non-zero when payload distortion or request failures are detected.
-
-## Configuration
-
-- `SEARX_BASE_URL`
-- `REQUEST_TIMEOUT_S`
-- `CACHE_TTL_S`
-- `FREE_RPM`, `PRO_RPM`, `ENTERPRISE_RPM`
-- `SESSION_SECRET`
-- `DB_PATH`
-
-## Production hardening recommendations
-
-- replace SQLite with Postgres for multi-node deployments
-- replace in-process rate limiter/cache with Redis
-- add background crawlers and real site telemetry ingestion for metrics
-- implement stronger verification checks (actual DNS/file fetch validation)
-- add RBAC, audit logs, billing, and abuse detection
+See **`INTEGRATION_GUIDE.md`** for step-by-step integration into your current product.
 
 ## Push to GitHub
-
-If no remote is configured:
 
 ```bash
 git remote add origin https://github.com/<your-org-or-user>/<repo>.git
 git push -u origin <your-branch>
-```
-
-Otherwise:
-
-```bash
-git push
 ```

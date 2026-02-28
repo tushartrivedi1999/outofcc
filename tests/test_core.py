@@ -73,7 +73,7 @@ class CoreTests(unittest.TestCase):
             self.assertIsNotNone(row)
             self.assertEqual(row["user_id"], user_id)
 
-    def test_search_console_flow(self):
+    def test_search_console_and_dataset_flow(self):
         with tempfile.TemporaryDirectory() as d:
             db = str(Path(d) / "app.db")
             store = UserStore(db)
@@ -97,6 +97,11 @@ class CoreTests(unittest.TestCase):
 
             store.log_api_usage(user_id, "python", 120, 8)
             self.assertEqual(len(store.list_recent_api_usage(user_id)), 1)
+
+            dataset_id = store.create_dataset(user_id, "d1", "open-search", "python", 20)
+            store.add_dataset_rows(dataset_id, [{"content": "x", "source_url": "https://a"}])
+            self.assertEqual(len(store.list_datasets(user_id)), 1)
+            self.assertEqual(len(store.dataset_rows(dataset_id)), 1)
 
             svg = svc.build_svg_bars([1, 3, 2])
             self.assertIn("<svg", svg)
